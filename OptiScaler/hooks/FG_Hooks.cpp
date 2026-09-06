@@ -721,35 +721,7 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
 
     _skipResize1 = true;
 
-    // Release swapchain backbuffers to prevent errors when resizing
-    if (State::Instance().activeFgOutput == FGOutput::XeFG)
-    {
-        for (UINT i = 0; i < 8; i++)
-        {
-            ID3D12Resource* backBuffer = nullptr;
-            auto bbResult = This->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
-
-            if (bbResult == S_OK)
-            {
-                LOG_DEBUG("Backbuffer {}: {:X}", i, (size_t) backBuffer);
-                auto refCount = backBuffer->Release();
-                while (refCount > XEFG_RESOURCE_REF_LIMIT)
-                {
-                    LOG_DEBUG("Releasing backbuffer {}: RefCount {}", i, refCount);
-                    refCount = backBuffer->Release();
-                }
-
-#if (XEFG_RESOURCE_REF_LIMIT == 0)
-                oldBackBuffers.push_back(backBuffer);
-#endif
-            }
-            else
-            {
-                LOG_DEBUG("GetBuffer failed for index {}: {:X}", i, (UINT) bbResult);
-                break;
-            }
-        }
-    }
+    // Backbuffer release probing is disabled for the MHW resize investigation.
 
     HRESULT result;
     {
@@ -958,35 +930,7 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
     if (Config::Instance()->OverlayMenu.value_or_default())
         MenuOverlayDx::CleanupRenderTarget(false, NULL);
 
-    // Release swapchain backbuffers to prevent errors when resizing
-    if (State::Instance().activeFgOutput == FGOutput::XeFG)
-    {
-        for (UINT i = 0; i < 8; i++)
-        {
-            ID3D12Resource* backBuffer = nullptr;
-            auto bbResult = This->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
-
-            if (bbResult == S_OK)
-            {
-                LOG_DEBUG("Backbuffer {}: {:X}", i, (size_t) backBuffer);
-                auto refCount = backBuffer->Release();
-                while (refCount > XEFG_RESOURCE_REF_LIMIT)
-                {
-                    LOG_DEBUG("Releasing backbuffer {}: RefCount {}", i, refCount);
-                    refCount = backBuffer->Release();
-                }
-
-#if (XEFG_RESOURCE_REF_LIMIT == 0)
-                oldBackBuffers.push_back(backBuffer);
-#endif
-            }
-            else
-            {
-                LOG_DEBUG("GetBuffer failed for index {}: {:X}", i, (UINT) bbResult);
-                break;
-            }
-        }
-    }
+    // Backbuffer release probing is disabled for the MHW resize investigation.
 
     HRESULT result;
     {
