@@ -265,7 +265,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
             if (!ReleaseSwapchain(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
-                          "reason = destroy_failed");
+                          "reason = release_not_completed");
                 return false;
             }
 
@@ -475,7 +475,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
             if (!ReleaseSwapchain(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
-                          "reason = destroy_failed");
+                          "reason = release_not_completed");
                 return false;
             }
 

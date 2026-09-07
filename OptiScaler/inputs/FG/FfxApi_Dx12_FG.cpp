@@ -433,7 +433,7 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
         LOG_INFO("Destroying Swapchain Context: {:X}", (size_t) State::Instance().currentFG);
         if (!State::Instance().currentFG->ReleaseSwapchain(State::Instance().currentFG->Hwnd()))
         {
-            LOG_ERROR("[XeFG][Lifecycle] action = ffx_destroy_context_aborted, reason = destroy_failed");
+            LOG_ERROR("[XeFG][Lifecycle] action = ffx_destroy_context_aborted, reason = release_not_completed");
             return FFX_API_RETURN_ERROR_PARAMETER;
         }
 
