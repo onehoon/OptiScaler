@@ -245,6 +245,14 @@ xefg_swapchain_d3d12_resource_data_t XeFG_Dx12::GetResourceData(FG_ResourceType 
 bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQueue, DXGI_SWAP_CHAIN_DESC* desc,
                                 IDXGISwapChain** swapChain, bool readyToRelease)
 {
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex, std::try_to_lock);
+    if (!lifecycleLock.owns_lock())
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
+                 "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
     if (State::Instance().currentFGSwapchain != nullptr && _hwnd == desc->OutputWindow)
     {
         if (Config::Instance()->FGPreserveSwapChain.value_or_default())
@@ -262,7 +270,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
-            if (!ReleaseSwapchain(_hwnd))
+            if (!ReleaseSwapchainLocked(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
                           "reason = release_not_completed");
@@ -456,6 +464,14 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
                                  DXGI_SWAP_CHAIN_DESC1* desc, DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
                                  IDXGISwapChain1** swapChain, bool readyToRelease)
 {
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex, std::try_to_lock);
+    if (!lifecycleLock.owns_lock())
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
+                 "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
     if (State::Instance().currentFGSwapchain != nullptr && _hwnd == hwnd)
     {
         if (Config::Instance()->FGPreserveSwapChain.value_or_default())
@@ -472,7 +488,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
-            if (!ReleaseSwapchain(_hwnd))
+            if (!ReleaseSwapchainLocked(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
                           "reason = release_not_completed");
@@ -1654,6 +1670,19 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
 void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
 
 bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
+{
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex, std::try_to_lock);
+    if (!lifecycleLock.owns_lock())
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = release_swapchain_deferred, "
+                 "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
+    return ReleaseSwapchainLocked(hwnd);
+}
+
+bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd)
 {
     if (hwnd != _hwnd || _hwnd == NULL)
         return false;
