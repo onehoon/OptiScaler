@@ -250,22 +250,28 @@ ULONG STDMETHODCALLTYPE Dx11wDx12SC::Release()
         State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
 
         auto fg = State::Instance().currentFG;
-        bool releaseCompleted = (fg == nullptr || fg->SwapchainContext() == nullptr);
-        if (fg != nullptr && fg->SwapchainContext() != nullptr)
+        bool releaseCompleted = (fg == nullptr);
+        if (fg != nullptr)
         {
-            if (fg->Mutex.getOwner() != 1)
+            const auto releaseOwner = fg->Mutex.getOwner();
+
+            if (releaseOwner == 1)
+            {
+                releaseCompleted = false;
+                LOG_WARN("[XeFG][Lifecycle] action = dx11_dx12_release_deferred, "
+                         "reason = release_already_in_progress");
+            }
+            else if (fg->SwapchainContext() == nullptr)
+            {
+                releaseCompleted = true;
+            }
+            else
             {
                 fg->Deactivate();
                 releaseCompleted = fg->ReleaseSwapchain(_handle);
 
                 if (!releaseCompleted)
                     LOG_ERROR("[XeFG][Lifecycle] action = dx11_dx12_release_aborted, reason = release_not_completed");
-            }
-            else
-            {
-                releaseCompleted = false;
-                LOG_WARN("[XeFG][Lifecycle] action = dx11_dx12_release_deferred, "
-                         "reason = release_already_in_progress");
             }
         }
 
