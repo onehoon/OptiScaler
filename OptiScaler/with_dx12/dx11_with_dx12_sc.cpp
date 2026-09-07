@@ -261,10 +261,6 @@ ULONG STDMETHODCALLTYPE Dx11wDx12SC::Release()
                 LOG_WARN("[XeFG][Lifecycle] action = dx11_dx12_release_deferred, "
                          "reason = release_already_in_progress");
             }
-            else if (fg->SwapchainContext() == nullptr)
-            {
-                releaseCompleted = true;
-            }
             else
             {
                 fg->Deactivate();
