@@ -263,7 +263,6 @@ ULONG STDMETHODCALLTYPE Dx11wDx12SC::Release()
             }
             else
             {
-                fg->Deactivate();
                 releaseCompleted = fg->ReleaseSwapchain(_handle);
 
                 if (!releaseCompleted)
