@@ -431,7 +431,11 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
     if (State::Instance().currentFG != nullptr && (void*) scContext == *context)
     {
         LOG_INFO("Destroying Swapchain Context: {:X}", (size_t) State::Instance().currentFG);
-        State::Instance().currentFG->ReleaseSwapchain(State::Instance().currentFG->Hwnd());
+        if (!State::Instance().currentFG->ReleaseSwapchain(State::Instance().currentFG->Hwnd()))
+        {
+            LOG_ERROR("[XeFG][Lifecycle] action = ffx_destroy_context_aborted, reason = destroy_failed");
+            return FFX_API_RETURN_ERROR_PARAMETER;
+        }
 
         if (State::Instance().currentWrappedSwapchain != nullptr &&
             State::Instance().currentSwapchainDesc.OutputWindow == State::Instance().currentFG->Hwnd())

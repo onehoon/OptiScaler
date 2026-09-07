@@ -696,10 +696,14 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
         if (fg != nullptr && fg->Mutex.getOwner() != 1 && fg->SwapchainContext() != nullptr)
         {
             fg->Deactivate();
-            fg->ReleaseSwapchain(_handle);
-
-            if (State::Instance().currentFGSwapchain != nullptr)
+            if (fg->ReleaseSwapchain(_handle))
+            {
                 State::Instance().currentFGSwapchain = nullptr;
+            }
+            else
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = wrapped_release_aborted, reason = destroy_failed");
+            }
         }
 
         auto refCount = _real->Release();

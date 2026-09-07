@@ -244,20 +244,23 @@ ULONG STDMETHODCALLTYPE Dx11wDx12SC::Release()
 
         FGHooks::ClearDx12InteropPresentSC(_fgSwapChain);
 
-        if (State::Instance().currentFGSwapchain == _fgSwapChain)
-            State::Instance().currentFGSwapchain = nullptr;
-
         if (State::Instance().currentD3D11Device == _dx11Device)
             State::Instance().currentD3D11Device = nullptr;
 
         State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
 
         auto fg = State::Instance().currentFG;
+        bool releaseSucceeded = true;
         if (fg != nullptr && fg->Mutex.getOwner() != 1 && fg->SwapchainContext() != nullptr)
         {
             fg->Deactivate();
-            fg->ReleaseSwapchain(_handle);
+            releaseSucceeded = fg->ReleaseSwapchain(_handle);
+            if (!releaseSucceeded)
+                LOG_ERROR("[XeFG][Lifecycle] action = dx11_dx12_release_aborted, reason = destroy_failed");
         }
+
+        if (releaseSucceeded && State::Instance().currentFGSwapchain == _fgSwapChain)
+            State::Instance().currentFGSwapchain = nullptr;
 
         delete this;
     }

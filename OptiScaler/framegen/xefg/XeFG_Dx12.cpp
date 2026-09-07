@@ -166,26 +166,27 @@ bool XeFG_Dx12::DestroySwapchainContext()
 {
     LOG_DEBUG("");
 
-    if (_swapChainContext != nullptr && !State::Instance().isShuttingDown)
+    if (_swapChainContext == nullptr || State::Instance().isShuttingDown)
+        return true;
+
+    auto context = _swapChainContext;
+    _swapChainContext = nullptr;
+
+    LOG_INFO("[XeFG][Lifecycle] action = destroy_begin, context = {:X}", (size_t) context);
+
+    auto result = XeFGProxy::Destroy()(context);
+
+    LOG_INFO("[XeFG][Lifecycle] action = destroy_return, context = {:X}, result = {} ({})", (size_t) context,
+             magic_enum::enum_name(result), (UINT) result);
+
+    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
-        auto context = _swapChainContext;
-        _swapChainContext = nullptr;
-
-        auto result = XeFGProxy::Destroy()(context);
-
-        LOG_INFO("Destroy result: {} ({})", magic_enum::enum_name(result), (UINT) result);
-
-        // Set it back because context is not destroyed
-        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
-        {
-            _swapChainContext = context;
-        }
-        else
-        {
-            State::Instance().currentFGSwapchain = nullptr;
-        }
+        _swapChainContext = context;
+        LOG_ERROR("[XeFG][Lifecycle] action = destroy_failed, context = {:X}, retained = true", (size_t) context);
+        return false;
     }
 
+    State::Instance().currentFGSwapchain = nullptr;
     return true;
 }
 
@@ -261,7 +262,12 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
-            ReleaseSwapchain(_hwnd);
+            if (!ReleaseSwapchain(_hwnd))
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
+                          "reason = destroy_failed");
+                return false;
+            }
 
             // Not sure why but XeFG sometimes doesn't release the swapchain properly
             // so we force release it here to be able to recreate swapchain for same hwnd
@@ -466,7 +472,12 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
-            ReleaseSwapchain(_hwnd);
+            if (!ReleaseSwapchain(_hwnd))
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
+                          "reason = destroy_failed");
+                return false;
+            }
 
             // Not sure why but XeFG sometimes doesn't release the swapchain properly
             // so we force release it here to be able to recreate swapchain for same hwnd
@@ -1670,7 +1681,22 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
     if (!State::Instance().isShuttingDown)
     {
         if (_swapChainContext != nullptr)
-            DestroySwapchainContext();
+        {
+            if (!DestroySwapchainContext())
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = release_swapchain_aborted, reason = destroy_failed, "
+                          "context = {:X}, swapchain = {:X}",
+                          (size_t) _swapChainContext, (size_t) State::Instance().currentFGSwapchain);
+
+                if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
+                {
+                    LOG_TRACE("Releasing Mutex after failed destroy: {}", Mutex.getOwner());
+                    Mutex.unlockThis(1);
+                }
+
+                return false;
+            }
+        }
 
         _swapChainContext = nullptr;
         State::Instance().currentFGSwapchain = nullptr;

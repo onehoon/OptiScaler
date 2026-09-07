@@ -1280,7 +1280,8 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
 
     if (!Config::Instance()->FGPreserveSwapChain.value_or_default())
     {
-        if (o_FGRelease(This) == 1)
+        const auto releaseResult = o_FGRelease(This);
+        if (releaseResult == 1)
         {
             LOG_DEBUG("");
 
@@ -1303,11 +1304,19 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
 
             // To prevent deadlock when FG release the swapchain
             skipReleaseChecks = true;
+            bool releaseSucceeded = true;
 
             if (State::Instance().currentFG != nullptr)
             {
                 LOG_DEBUG("FG Swapchain released, release FG & swapchain context");
-                State::Instance().currentFG->ReleaseSwapchain(_hwnd);
+                releaseSucceeded = State::Instance().currentFG->ReleaseSwapchain(_hwnd);
+            }
+
+            if (!releaseSucceeded)
+            {
+                skipReleaseChecks = false;
+                LOG_ERROR("[XeFG][Lifecycle] action = fg_release_aborted, reason = release_swapchain_failed");
+                return releaseResult;
             }
 
             LOG_DEBUG("FG Swapchain released, clearing currentFGSwapchain");
