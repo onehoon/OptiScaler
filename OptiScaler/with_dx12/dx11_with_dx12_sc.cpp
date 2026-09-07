@@ -250,16 +250,26 @@ ULONG STDMETHODCALLTYPE Dx11wDx12SC::Release()
         State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
 
         auto fg = State::Instance().currentFG;
-        bool releaseSucceeded = true;
-        if (fg != nullptr && fg->Mutex.getOwner() != 1 && fg->SwapchainContext() != nullptr)
+        bool releaseCompleted = (fg == nullptr || fg->SwapchainContext() == nullptr);
+        if (fg != nullptr && fg->SwapchainContext() != nullptr)
         {
-            fg->Deactivate();
-            releaseSucceeded = fg->ReleaseSwapchain(_handle);
-            if (!releaseSucceeded)
-                LOG_ERROR("[XeFG][Lifecycle] action = dx11_dx12_release_aborted, reason = destroy_failed");
+            if (fg->Mutex.getOwner() != 1)
+            {
+                fg->Deactivate();
+                releaseCompleted = fg->ReleaseSwapchain(_handle);
+
+                if (!releaseCompleted)
+                    LOG_ERROR("[XeFG][Lifecycle] action = dx11_dx12_release_aborted, reason = release_not_completed");
+            }
+            else
+            {
+                releaseCompleted = false;
+                LOG_WARN("[XeFG][Lifecycle] action = dx11_dx12_release_deferred, "
+                         "reason = release_already_in_progress");
+            }
         }
 
-        if (releaseSucceeded && State::Instance().currentFGSwapchain == _fgSwapChain)
+        if (releaseCompleted && State::Instance().currentFGSwapchain == _fgSwapChain)
             State::Instance().currentFGSwapchain = nullptr;
 
         delete this;

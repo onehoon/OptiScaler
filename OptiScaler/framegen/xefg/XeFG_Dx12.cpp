@@ -1664,8 +1664,9 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
     {
         if (Mutex.getOwner() == 1)
         {
-            LOG_WARN("Skipping Mutex we are already in ReleaseSwapchain");
-            return true;
+            LOG_WARN("[XeFG][Lifecycle] action = release_swapchain_deferred, "
+                     "reason = release_already_in_progress");
+            return false;
         }
 
         LOG_TRACE("Waiting Mutex 1, current: {}", Mutex.getOwner());
