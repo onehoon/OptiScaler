@@ -693,7 +693,7 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
             State::Instance().currentRealSwapchain = nullptr;
 
         auto fg = State::Instance().currentFG;
-        bool releaseCompleted = (fg == nullptr);
+        bool releaseCompleted = false;
         if (fg != nullptr)
         {
             if (fg->Mutex.getOwner() == 1)
@@ -713,7 +713,7 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
             }
         }
 
-        if (releaseCompleted && State::Instance().currentFGSwapchain != nullptr)
+        if (releaseCompleted)
             State::Instance().currentFGSwapchain = nullptr;
 
         auto refCount = _real->Release();
