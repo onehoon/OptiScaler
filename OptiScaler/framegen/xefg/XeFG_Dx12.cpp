@@ -1660,7 +1660,22 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
 
     LOG_DEBUG("");
 
-    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
+    const bool useConfiguredMutex = Config::Instance()->FGUseMutexForSwapchain.value_or_default();
+    bool ownsFallbackGuard = false;
+
+    if (!useConfiguredMutex)
+    {
+        if (_swapchainReleaseInProgress.exchange(true, std::memory_order_acq_rel))
+        {
+            LOG_WARN("[XeFG][Lifecycle] action = release_swapchain_deferred, "
+                     "reason = release_already_in_progress");
+            return false;
+        }
+
+        ownsFallbackGuard = true;
+    }
+
+    if (useConfiguredMutex)
     {
         if (Mutex.getOwner() == 1)
         {
@@ -1689,11 +1704,14 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
                           "context = {:X}, swapchain = {:X}",
                           (size_t) _swapChainContext, (size_t) State::Instance().currentFGSwapchain);
 
-                if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
+                if (useConfiguredMutex)
                 {
                     LOG_TRACE("Releasing Mutex after failed destroy: {}", Mutex.getOwner());
                     Mutex.unlockThis(1);
                 }
+
+                if (ownsFallbackGuard)
+                    _swapchainReleaseInProgress.store(false, std::memory_order_release);
 
                 return false;
             }
@@ -1705,11 +1723,14 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
 
     ReleaseObjects();
 
-    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
+    if (useConfiguredMutex)
     {
         LOG_TRACE("Releasing Mutex: {}", Mutex.getOwner());
         Mutex.unlockThis(1);
     }
+
+    if (ownsFallbackGuard)
+        _swapchainReleaseInProgress.store(false, std::memory_order_release);
 
     return true;
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include <framegen/IFGFeature_Dx12.h>
 
 #include <proxies/XeLL_Proxy.h>
@@ -18,6 +20,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
   private:
     xefg_swapchain_handle_t _swapChainContext = nullptr;
     xefg_swapchain_handle_t _fgContext = nullptr;
+    std::atomic_bool _swapchainReleaseInProgress { false };
 
     uint32_t _width = 0;
     uint32_t _height = 0;
