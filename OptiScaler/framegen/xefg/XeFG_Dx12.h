@@ -76,6 +76,11 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     void* FrameGenerationContext() override final;
     void* SwapchainContext() override final;
 
+    bool SwapchainReleaseInProgress() const noexcept
+    {
+        return _swapchainReleaseInProgress.load(std::memory_order_acquire);
+    }
+
     XeFG_Dx12() : IFGFeature_Dx12(), IFGFeature()
     {
         if (XeFGProxy::Module() == nullptr)

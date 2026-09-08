@@ -1276,6 +1276,17 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
     if (skipReleaseChecks || State::Instance().currentFGSwapchain != This || State::Instance().isShuttingDown)
         return o_FGRelease(This);
 
+    if (State::Instance().activeFgOutput == FGOutput::XeFG && State::Instance().currentFG != nullptr)
+    {
+        auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG);
+        if (xefg != nullptr && xefg->SwapchainReleaseInProgress())
+        {
+            LOG_TRACE("[XeFG][Lifecycle] action = fg_release_forwarded, "
+                      "reason = lifecycle_transaction_in_progress");
+            return o_FGRelease(This);
+        }
+    }
+
     This->AddRef();
 
     if (!Config::Instance()->FGPreserveSwapChain.value_or_default())
