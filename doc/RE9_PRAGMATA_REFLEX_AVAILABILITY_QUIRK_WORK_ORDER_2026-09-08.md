@@ -1,40 +1,78 @@
-# Work Order: RE9 / PRAGMATA Streamline Reflex Availability Quirk
+# Work Order: RE9 / PRAGMATA Intel-Only Streamline Reflex Availability Quirk
 
 Date: 2026-09-08  
 Repository: `onehoon/OptiScaler`  
 Planning / PR base branch: `Reflex_RE9_Pragmata`  
-Base SHA at planning time: `dfe80e76d0c0dbe711ba542c8462c0bdb8a2e7e3`  
+Reviewed source baseline: `dfe80e76d0c0dbe711ba542c8462c0bdb8a2e7e3`  
 Suggested implementation branch: `fix/re9-pragmata-reflex-availability-quirk`  
-Upstream reference: `optiscaler/OptiScaler@da70e61e1542a0b99adcb24168ff941e42109567`
+Upstream reference reviewed: `optiscaler/OptiScaler@da70e61e1542a0b99adcb24168ff941e42109567`
 
 ---
 
 # 1. Goal
 
-Implement the smallest upstream-friendly compatibility fix for the following issue:
+Implement the smallest upstream-friendly compatibility fix for a Reflex availability issue reproduced only on Intel GPUs in:
 
-- On Intel GPUs, OptiScaler Streamline spoofing successfully unlocks DLSS upscaling and DLSS Frame Generation paths in **Resident Evil Requiem (`re9.exe`)** and **PRAGMATA (`pragmata.exe`)**.
-- The Streamline Reflex plugin also loads successfully.
-- However, the in-game Reflex option remains unavailable/disabled in these two titles.
-- The same general OptiScaler spoofing approach can expose Reflex correctly in other Capcom titles such as Monster Hunter Wilds and Dragon's Dogma 2.
+- Resident Evil Requiem: `re9.exe`
+- PRAGMATA: `pragmata.exe`
 
-The intended change is **not** a global fake-NVAPI behavior change.
+Observed Intel behavior:
 
-The intended change is a **game-specific deep-code quirk**, following existing OptiScaler conventions, which adjusts only the runtime Streamline Reflex availability state returned to the affected games.
+- OptiScaler Streamline spoofing successfully exposes DLSS upscaling and DLSS Frame Generation paths.
+- `sl.reflex` loads successfully.
+- fake NVAPI and the XeLL low-latency backend initialize successfully.
+- the in-game Reflex option remains unavailable/disabled.
+- comparison Capcom titles such as Monster Hunter Wilds and Dragon's Dogma 2 do not show the same problem under the same general OptiScaler spoofing approach.
 
-Primary design invariant:
+The requested compatibility correction is **Intel-only**.
 
-> Outside `re9.exe` and `pragmata.exe`, behavior must remain unchanged.
+AMD and NVIDIA do not need this workaround and must remain behaviorally unchanged.
 
-Secondary invariant:
+The intended solution is a **game-specific deep-code quirk with an Intel vendor guard**, following existing OptiScaler quirk and Streamline-hook patterns.
 
-> Even inside those games, native NVIDIA behavior must not be force-overridden. The compatibility correction must only activate for OptiScaler's fake-NVAPI + Streamline-spoof scenario after the original Streamline call succeeds.
+Primary invariant:
+
+> The compatibility override may only affect `re9.exe` and `pragmata.exe` when the real primary GPU vendor is Intel.
+
+Secondary invariants:
+
+> AMD must not receive the availability override even when fake NVAPI is in use.
+
+> Native NVIDIA behavior must remain fully native and must never be force-overridden by this quirk.
 
 ---
 
-# 2. Why This Must Be Implemented as an OptiScaler Quirk
+# 2. Scope and Non-Goals
 
-OptiScaler already has a mature game-quirk mechanism for exactly this class of title-specific compatibility behavior.
+This PR should be intentionally narrow.
+
+Do:
+
+- add one deep-code GameQuirk;
+- attach it only to `re9.exe` and `pragmata.exe`;
+- intercept `slReflexGetState` using the existing Reflex plugin-function hook path;
+- call the original function first;
+- only on Intel + fake-NVAPI + Streamline-spoofing + successful original call, expose `lowLatencyAvailable = true`;
+- include bounded diagnostic logging in the same PR.
+
+Do not:
+
+- change global fake-NVAPI capability behavior;
+- change `NvAPI_D3D_GetSleepStatus` globally;
+- alter `LowLatencyCtx` globally;
+- alter Reflex behavior for AMD;
+- alter native NVIDIA Reflex behavior;
+- add a generic user-facing config option;
+- add vendor fields or new vendor-specific macros to the global `QuirkEntry` table just for this fix;
+- add `re9demo.exe` or `pragmata_sketchbook.exe` without reproduction evidence;
+- force `latencyReportAvailable` or any unrelated `ReflexState` member;
+- modify Streamline plugin JSON or `slIsFeatureSupported` unless new evidence disproves the current hypothesis.
+
+---
+
+# 3. Why This Should Remain an OptiScaler Game Quirk
+
+OptiScaler already uses title-specific quirks for deeper compatibility behavior.
 
 Relevant existing examples include:
 
@@ -42,38 +80,125 @@ Relevant existing examples include:
 - `GameQuirk::HitmanReflexHacks`
 - `GameQuirk::PregmataFixDLSSModes`
 
-`HitmanReflexHacks` is direct precedent for title-specific Reflex behavior changes.
+`HitmanReflexHacks` is direct precedent for game-specific Reflex handling.
 
-`PregmataFixDLSSModes` is even closer structural precedent: the quirk is registered for selected Capcom executables and then used inside `Streamline_Hooks.cpp` to replace a specific Streamline plugin function only when the quirk is active.
+`PregmataFixDLSSModes` is the closest structural precedent because it is registered in `Quirks.h` and used inside `Streamline_Hooks.cpp` to replace a specific Streamline plugin function only when the quirk is active.
 
-Therefore this work must follow that pattern rather than introduce:
+Follow that model.
 
-- hard-coded `re9.exe` / `pragmata.exe` checks inside Streamline hooks;
-- a new generic configuration option;
-- a global fake-NVAPI capability override;
-- a global `slReflexGetState` behavior change for every game.
-
-This is important both technically and for upstream reviewability.
+Do not hard-code executable names inside `Streamline_Hooks.cpp`.
 
 ---
 
-# 3. Latest Source Audit
+# 4. Vendor Scoping Decision
 
-This work order was revalidated against the current `Reflex_RE9_Pragmata` source before implementation.
+## 4.1 Current Quirk table is executable-based, not vendor-based
 
-For the relevant files, the fork currently matches the present upstream source blobs used for this review.
-
-## 3.1 Existing Capcom quirks
-
-Current `OptiScaler/misc/Quirks.h` contains, among others:
+Current `QuirkEntry` contains only:
 
 ```cpp
-QUIRK_ENTRY("dd2.exe", GameQuirk::RestoreComputeSigOnNonNvidia, GameQuirk::DisableDxgiSpoofing,
-            GameQuirk::DisableHudfix, GameQuirk::RestoreComputeSigOnNvidia, GameQuirk::PregmataFixDLSSModes),
+struct QuirkEntry
+{
+    const char* exeName;
+    std::initializer_list<GameQuirk> quirks;
+};
+```
 
-QUIRK_ENTRY("pragmata_sketchbook.exe", GameQuirk::RestoreComputeSigOnNonNvidia, GameQuirk::DisableDxgiSpoofing,
-            GameQuirk::RestoreComputeSigOnNvidia, GameQuirk::AllowedFrameAhead2, GameQuirk::PregmataFixDLSSModes),
+The existing table therefore selects quirks by executable.
 
+Do **not** redesign the table to add a GPU vendor field for this single fix.
+
+Do **not** add a new macro such as:
+
+```cpp
+QUIRK_ENTRY_INTEL(...)
+```
+
+That would expand the framework and increase upstream review surface without being necessary.
+
+## 4.2 Existing OptiScaler precedent allows conditional quirk effects
+
+OptiScaler already has quirks whose actual effect depends on runtime conditions. For example, config-level quirks such as restore-compute-signature behavior are conditionally applied according to detected GPU state.
+
+For this new deep-code quirk, keep executable registration in `Quirks.h` and apply the vendor restriction at the actual Streamline compatibility boundary.
+
+This yields the intended logical condition:
+
+```text
+(re9.exe OR pragmata.exe)
+AND primary GPU vendor == Intel
+AND StreamlineSpoofing == enabled
+AND fake NVAPI is the main NVAPI
+AND original slReflexGetState == eOk
+```
+
+Only then may OptiScaler change:
+
+```cpp
+state.lowLatencyAvailable
+```
+
+to `true`.
+
+## 4.3 Prefer an Intel-specific quirk name
+
+Because the workaround is explicitly not required on AMD or NVIDIA, use a vendor-scoped name so the intent is visible in the table and in upstream review.
+
+Preferred name:
+
+```cpp
+GameQuirk::FixSlReflexAvailabilityOnIntel
+```
+
+This is preferred over the earlier generic name `FixSlReflexAvailability`.
+
+If upstream maintainers explicitly request the shorter generic name during review, the implementation must still retain the Intel vendor guard.
+
+---
+
+# 5. Latest Source Audit
+
+The relevant current code was rechecked before this document update.
+
+## 5.1 Real GPU vendor information is already available
+
+`GpuInformation` contains:
+
+```cpp
+VendorId::Value vendorId = VendorId::Invalid;
+```
+
+and OptiScaler defines:
+
+```cpp
+namespace VendorId
+{
+enum Value : uint32_t
+{
+    Invalid = 0,
+    Microsoft = 0x1414,
+    Nvidia = 0x10DE,
+    AMD = 0x1002,
+    Intel = 0x8086,
+};
+}
+```
+
+The real primary GPU can be obtained through:
+
+```cpp
+IdentifyGpu::getPrimaryGpu()
+```
+
+`IdentifyGpu` performs its own unspoofed adapter discovery and keeps cached GPU information, so this is the appropriate existing source for the actual vendor check.
+
+Do not use a spoofed Streamline adapter vendor to decide whether this workaround is Intel-specific.
+
+## 5.2 Existing Capcom quirks
+
+Current `OptiScaler/misc/Quirks.h` contains entries including:
+
+```cpp
 QUIRK_ENTRY("re9.exe", GameQuirk::RestoreComputeSigOnNonNvidia, GameQuirk::DisableDxgiSpoofing,
             GameQuirk::RestoreComputeSigOnNvidia),
 
@@ -82,22 +207,22 @@ QUIRK_ENTRY("re9demo.exe", GameQuirk::RestoreComputeSigOnNonNvidia, GameQuirk::D
 
 QUIRK_ENTRY("pragmata.exe", GameQuirk::RestoreComputeSigOnNonNvidia, GameQuirk::DisableDxgiSpoofing,
             GameQuirk::RestoreComputeSigOnNvidia, GameQuirk::PregmataFixDLSSModes),
+
+QUIRK_ENTRY("pragmata_sketchbook.exe", GameQuirk::RestoreComputeSigOnNonNvidia, GameQuirk::DisableDxgiSpoofing,
+            GameQuirk::RestoreComputeSigOnNvidia, GameQuirk::AllowedFrameAhead2,
+            GameQuirk::PregmataFixDLSSModes),
 ```
 
-The new Reflex compatibility quirk should initially be added to only:
+Add the new quirk only to the two main executables with reproduced evidence:
 
 ```text
 re9.exe
 pragmata.exe
 ```
 
-Do **not** include `re9demo.exe` or `pragmata_sketchbook.exe` in the first implementation unless the same failure is reproduced and documented there.
+## 5.3 Reflex plugin-load spoof already exists
 
-This keeps the initial patch evidence-based and minimizes upstream blast radius.
-
-## 3.2 Existing Streamline Reflex plugin-load spoofing is already present
-
-Current `StreamlineHooks::hkreflex_slOnPluginLoad()` already performs temporary SystemCaps spoofing when Streamline spoofing is enabled:
+Current `StreamlineHooks::hkreflex_slOnPluginLoad()` already performs temporary Reflex SystemCaps spoofing when Streamline spoofing is enabled:
 
 ```cpp
 uint32_t currentArch = 0;
@@ -114,7 +239,7 @@ if (Config::Instance()->StreamlineSpoofing.value_or_default())
     setArch(currentArch);
 ```
 
-The current `spoofArch()` path also already contains Reflex handling:
+Current `spoofArch()` already contains Reflex/PCL handling:
 
 ```cpp
 else if (feature == sl::kFeatureReflex || feature == sl::kFeaturePCL)
@@ -124,78 +249,35 @@ else if (feature == sl::kFeatureReflex || feature == sl::kFeaturePCL)
 }
 ```
 
-Therefore this PR must **not** duplicate or redesign plugin-load capability spoofing.
+Do not duplicate or redesign this stage.
 
-## 3.3 The current Reflex plugin-function hook is missing `slReflexGetState`
+## 5.4 Current Reflex plugin-function hook still does not intercept `slReflexGetState`
 
 Current `hkreflex_slGetPluginFunction()` intercepts:
 
-- Streamline 1 `slSetConstants`;
+- SL1 `slSetConstants`;
 - `slOnPluginLoad`;
 - `slReflexSetOptions`;
 - `slReflexSleep`;
-- conditionally `slReflexSetMarker`.
+- conditional `slReflexSetMarker`.
 
-It does not intercept `slReflexGetState`.
+It does not currently intercept:
 
-Current relevant structure:
-
-```cpp
-void* StreamlineHooks::hkreflex_slGetPluginFunction(const char* functionName)
-{
-    if (strcmp(functionName, "slSetConstants") == 0 && State::Instance().streamlineVersion.major == 1)
-    {
-        o_reflex_slSetConstants_sl1 = (PFN_slSetConstants_sl1) o_reflex_slGetPluginFunction(functionName);
-        return &hkreflex_slSetConstants_sl1;
-    }
-
-    if (strcmp(functionName, "slOnPluginLoad") == 0)
-    {
-        o_reflex_slOnPluginLoad = (PFN_slOnPluginLoad) o_reflex_slGetPluginFunction(functionName);
-        return &hkreflex_slOnPluginLoad;
-    }
-
-    if (strcmp(functionName, "slReflexSetOptions") == 0)
-    {
-        o_slReflexSetOptions = (decltype(&slReflexSetOptions)) o_reflex_slGetPluginFunction(functionName);
-        return &hkslReflexSetOptions;
-    }
-
-    if (strcmp(functionName, "slReflexSleep") == 0)
-    {
-        o_slReflexSleep = (decltype(&slReflexSleep)) o_reflex_slGetPluginFunction(functionName);
-        return &hkslReflexSleep;
-    }
-
-    if (strcmp(functionName, "slReflexSetMarker") == 0 &&
-        (State::Instance().gameQuirks & GameQuirk::FixSlSimulationMarkers ||
-         State::Instance().activeFgInput == FGInput::DLSSG))
-    {
-        o_slPCLSetMarker = (decltype(&slPCLSetMarker)) o_reflex_slGetPluginFunction(functionName);
-        return &hkslPCLSetMarker;
-    }
-
-    return o_reflex_slGetPluginFunction(functionName);
-}
+```text
+slReflexGetState
 ```
 
-This is the narrow missing interception point for this experiment/fix.
+This remains the narrow missing interception point.
 
-## 3.4 Current fake NVAPI already implements the relevant low-latency calls
+## 5.5 Current fake NVAPI already exposes GetSleepStatus
 
-Do not implement a broad fake-NVAPI patch for this task.
-
-Current `fakenvapi::queryInterface()` already exposes:
+Current fake NVAPI already exposes:
 
 ```cpp
 INSERT_AND_RETURN_WHEN_EQUALS(NvAPI_D3D_GetSleepStatus)
-INSERT_AND_RETURN_WHEN_EQUALS(NvAPI_D3D_GetLatency)
-INSERT_AND_RETURN_WHEN_EQUALS(NvAPI_D3D_SetSleepMode)
-INSERT_AND_RETURN_WHEN_EQUALS(NvAPI_D3D_SetLatencyMarker)
-INSERT_AND_RETURN_WHEN_EQUALS(NvAPI_D3D_Sleep)
 ```
 
-Current `nvapi_calls::NvAPI_D3D_GetSleepStatus()` already routes to the low-latency context:
+and routes it through:
 
 ```cpp
 NvAPI_Status __cdecl NvAPI_D3D_GetSleepStatus(IUnknown* pDevice, NV_GET_SLEEP_STATUS_PARAMS* pGetSleepStatusParams)
@@ -207,24 +289,26 @@ NvAPI_Status __cdecl NvAPI_D3D_GetSleepStatus(IUnknown* pDevice, NV_GET_SLEEP_ST
 }
 ```
 
-This confirms that the current codebase already has a real fake-NVAPI GetSleepStatus implementation.
-
-The proposed quirk should therefore remain above that layer, at the Streamline state returned to the game.
+Therefore this task must not become a broad fake-NVAPI rewrite.
 
 ---
 
-# 4. Why `slReflexGetState` Is the Correct Compatibility Boundary
+# 6. Why `slReflexGetState` Is the Correct Compatibility Boundary
 
-NVIDIA Streamline's `ReflexState` exposes:
+Streamline exposes runtime Reflex support through `sl::ReflexState`:
 
 ```cpp
 bool lowLatencyAvailable = false;
 bool latencyReportAvailable = false;
 ```
 
-and `slReflexGetState` returns that structure to the application.
+The application obtains that state through:
 
-Current NVIDIA Streamline Reflex runtime logic rechecks low-latency availability using the compute backend:
+```cpp
+slReflexGetState(sl::ReflexState& state)
+```
+
+NVIDIA Streamline's Reflex runtime logic rechecks backend support before returning the state:
 
 ```cpp
 if (ctx.compute && ctx.lowLatencyAvailable)
@@ -237,102 +321,56 @@ settings->lowLatencyAvailable = ctx.lowLatencyAvailable;
 settings->latencyReportAvailable = ctx.latencyReportAvailable;
 ```
 
-This means Reflex capability has at least two observable stages:
+This creates two relevant stages:
 
-1. plugin-load / SystemCaps support;
-2. runtime `slReflexGetState()` availability returned to the game.
+1. plugin-load/SystemCaps capability;
+2. runtime availability returned to the game.
 
-OptiScaler already spoofs stage 1 successfully in the affected titles.
+OptiScaler already successfully passes stage 1 in the affected titles.
 
-The missing game-specific compatibility point is therefore stage 2.
+The leading hypothesis is that RE9 and PRAGMATA gate their UI/activation more strictly on stage 2.
 
 ---
 
-# 5. Existing Runtime Evidence
+# 7. Existing Runtime Evidence
 
-The original reproduction logs were captured with OptiScaler `v0.9.5-pre4` at commit `8dac650`, not with the current branch.
+The original reproduction logs were captured with OptiScaler `v0.9.5-pre4` at commit `8dac650`, not the current branch.
 
-That distinction must be preserved in the PR description.
+Preserve this distinction in the PR description.
 
-The old logs establish the following behavior:
-
-## RE9 / PRAGMATA
+For Intel in RE9 / PRAGMATA the logs showed:
 
 - fake NVAPI initialized;
 - Reflex hooks initialized;
-- Streamline `sl.reflex` loaded successfully;
-- the Reflex plugin received a valid adapter mask;
-- XeLL context initialization later succeeded and low-latency reduction was enabled;
-- however, every observed XeFG dispatch retained `Reflex Id: 0`.
+- `sl.reflex` loaded successfully;
+- valid Reflex plugin adapter mask;
+- XeLL context later initialized successfully;
+- XeLL latency reduction enabled;
+- nevertheless XeFG dispatches stayed at `Reflex Id: 0`.
 
-Observed dispatch counts from the reproduction logs:
+Observed reproduction counts:
 
 ```text
 PRAGMATA: 15,336 / 15,336 dispatches had Reflex Id = 0
 RE9:       3,945 / 3,945 dispatches had Reflex Id = 0
 ```
 
-Comparison logs using the same OptiScaler build showed active Reflex frame IDs:
+Comparison logs from the same OptiScaler build:
 
 ```text
-Dragon's Dogma 2: 7,376 observed dispatches, all with non-zero Reflex IDs
-Monster Hunter Wilds: 5,229 observed dispatches, all with non-zero Reflex IDs
+Dragon's Dogma 2:      7,376 observed dispatches, all non-zero Reflex IDs
+Monster Hunter Wilds:  5,229 observed dispatches, all non-zero Reflex IDs
 ```
 
-This strongly suggests that RE9 and PRAGMATA never enter the normal active Reflex marker path even though the Reflex plugin itself loads.
+This supports the runtime-state-gating hypothesis, but does not yet directly prove the exact `slReflexGetState` return value on the current branch.
 
-The leading hypothesis is:
-
-> These games gate their Reflex UI / activation on the runtime `slReflexGetState().lowLatencyAvailable` value more strictly than the comparison titles.
-
-This is still a hypothesis until the new hook logs the original current-branch value.
-
-Therefore **diagnostic logging and the compatibility override belong in the same PR**.
+For that reason the diagnostic log and fix should ship together in the test PR.
 
 ---
 
-# 6. Required Design
+# 8. Required Production Files
 
-Add one new deep-code quirk:
-
-```cpp
-GameQuirk::FixSlReflexAvailability
-```
-
-The name intentionally follows existing style such as:
-
-```text
-FixSlSimulationMarkers
-PregmataFixDLSSModes
-HitmanReflexHacks
-```
-
-Do not add a game name to the hook implementation itself.
-
-The quirk is the game-selection mechanism.
-
-## 6.1 Important enum stability rule
-
-Do not reorder existing `GameQuirk` entries.
-
-Append the new value immediately before the terminal `_` entry so existing enum ordinal/flag positions are not shifted unnecessarily.
-
-Preferred pattern:
-
-```cpp
-    CreateSLOnThe2ndDevice,
-    FixSlReflexAvailability,
-    // Don't forget to add the new entry to printQuirks
-    _
-```
-
-If the comment placement needs adjusting for clarity, keep the semantic rule: **append; do not reorder existing quirks**.
-
----
-
-# 7. Required File Changes
-
-The expected production-code diff should be limited to:
+Expected production-code diff:
 
 ```text
 OptiScaler/misc/Quirks.h
@@ -341,11 +379,18 @@ OptiScaler/hooks/Streamline_Hooks.h
 OptiScaler/hooks/Streamline_Hooks.cpp
 ```
 
-Do not modify `fakenvapi.cpp`, `nvapi_calls.cpp`, `Reflex_Hooks.cpp`, or general configuration unless new runtime evidence proves this design incorrect.
+Do not modify unless new evidence requires it:
+
+```text
+OptiScaler/nvapi/fakenvapi.cpp
+OptiScaler/nvapi/fakenvapi/nvapi_calls.cpp
+OptiScaler/hooks/Reflex_Hooks.cpp
+Config files / public config schema
+```
 
 ---
 
-# 8. Change 1 — Add the New Quirk
+# 9. Change 1 — Add the Intel-Specific Deep-Code Quirk
 
 File:
 
@@ -353,30 +398,30 @@ File:
 OptiScaler/misc/Quirks.h
 ```
 
-Append the enum value near the end:
+Do not reorder existing enum values.
+
+Append immediately before the terminal `_` entry:
 
 ```cpp
     CreateSLOnThe2ndDevice,
-    FixSlReflexAvailability,
+    FixSlReflexAvailabilityOnIntel,
     // Don't forget to add the new entry to printQuirks
     _
 ```
 
 Then extend only the two reproduced main-game entries.
 
-Recommended final entries:
+Recommended result:
 
 ```cpp
 QUIRK_ENTRY("re9.exe", GameQuirk::RestoreComputeSigOnNonNvidia, GameQuirk::DisableDxgiSpoofing,
-            GameQuirk::RestoreComputeSigOnNvidia, GameQuirk::FixSlReflexAvailability),
+            GameQuirk::RestoreComputeSigOnNvidia, GameQuirk::FixSlReflexAvailabilityOnIntel),
 ```
-
-and:
 
 ```cpp
 QUIRK_ENTRY("pragmata.exe", GameQuirk::RestoreComputeSigOnNonNvidia, GameQuirk::DisableDxgiSpoofing,
             GameQuirk::RestoreComputeSigOnNvidia, GameQuirk::PregmataFixDLSSModes,
-            GameQuirk::FixSlReflexAvailability),
+            GameQuirk::FixSlReflexAvailabilityOnIntel),
 ```
 
 Do not add the new quirk to:
@@ -388,11 +433,11 @@ dd2.exe
 monsterhunterwilds.exe
 ```
 
-in this first patch.
+unless separately reproduced.
 
 ---
 
-# 9. Change 2 — Add `printQuirks` Reporting
+# 10. Change 2 — Add `printQuirks()` Reporting
 
 File:
 
@@ -400,24 +445,26 @@ File:
 OptiScaler/dllmain.cpp
 ```
 
-The existing quirk enum explicitly requires each new quirk to be added to `printQuirks()`.
-
-Follow the current explicit-if style.
+Follow the existing explicit `if` style.
 
 Suggested entry:
 
 ```cpp
-if (quirks & GameQuirk::FixSlReflexAvailability)
-    stringQuirks.push_back("Fix Streamline Reflex availability");
+if (quirks & GameQuirk::FixSlReflexAvailabilityOnIntel)
+    stringQuirks.push_back("Fix Streamline Reflex availability on Intel");
 ```
 
-Keep the message short and implementation-oriented.
+Do not introduce a generic enum-to-string refactor.
 
-Do not introduce a new generic enum-to-string system as part of this PR.
+Note:
+
+Because the current global quirk table is executable-based, this message may be listed for the executable even when the actual runtime vendor guard later declines the override on AMD/NVIDIA. That is acceptable for this narrow PR as long as the runtime effect is strictly vendor-gated.
+
+Do not redesign `CheckQuirks()` or `QuirkEntry` solely to make this printout vendor-aware.
 
 ---
 
-# 10. Change 3 — Add the Reflex GetState Hook Declaration
+# 11. Change 3 — Add the Reflex GetState Hook Declaration
 
 File:
 
@@ -425,7 +472,7 @@ File:
 OptiScaler/hooks/Streamline_Hooks.h
 ```
 
-Inside the existing Reflex section, add the original function pointer:
+In the existing Reflex section add:
 
 ```cpp
 inline static decltype(&slReflexGetState) o_slReflexGetState = nullptr;
@@ -440,27 +487,23 @@ inline static decltype(&slReflexGetState) o_slReflexGetState = nullptr;
 inline static decltype(&slReflexSleep) o_slReflexSleep = nullptr;
 ```
 
-Add the hook declaration:
+Add:
 
 ```cpp
 static sl::Result hkslReflexGetState(sl::ReflexState& state);
 ```
 
-Recommended placement next to `hkslReflexSetOptions` / `hkslReflexSleep`.
-
-Also add signature validation:
+and add signature validation using the existing style:
 
 ```cpp
 VALIDATE_MEMBER_HOOK(hkslReflexGetState, decltype(&slReflexGetState))
 ```
 
-Follow the existing validation block style exactly.
-
-Do not add `pch.h` to the header.
+Do not create a custom typedef unless needed by compilation.
 
 ---
 
-# 11. Change 4 — Hook `slReflexGetState` Only for the Quirk
+# 12. Change 4 — Intercept `slReflexGetState` Only for the Game Quirk
 
 File:
 
@@ -468,102 +511,131 @@ File:
 OptiScaler/hooks/Streamline_Hooks.cpp
 ```
 
-Follow the same approach currently used by `PregmataFixDLSSModes`: only return the replacement function when the game quirk is active.
+Inside `hkreflex_slGetPluginFunction()` add the new function interception near the existing Reflex functions.
 
-Add this block to `hkreflex_slGetPluginFunction()` near the other Reflex function checks:
+Preferred structure:
 
 ```cpp
 if (strcmp(functionName, "slReflexGetState") == 0 &&
-    (State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailability))
+    State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel)
 {
     o_slReflexGetState = (decltype(&slReflexGetState)) o_reflex_slGetPluginFunction(functionName);
-    return &hkslReflexGetState;
+
+    if (o_slReflexGetState != nullptr)
+        return &hkslReflexGetState;
+
+    return nullptr;
 }
 ```
 
-This is intentionally preferable to globally hooking `slReflexGetState` for every title and then checking the quirk inside every call.
+Keep the hook selection driven by the existing GameQuirk bit.
 
-For non-quirked games, existing behavior should remain:
+Do not hard-code executable names here.
 
-```cpp
-return o_reflex_slGetPluginFunction(functionName);
-```
-
-The normal upstream function pointer should therefore be returned directly for MHW, DD2, and all unrelated games.
-
-Do not add executable-name checks here.
+Do not make this a global Reflex GetState hook for every game unless required by an existing code-style constraint.
 
 ---
 
-# 12. Change 5 — Implement the Minimal GetState Compatibility Shim
+# 13. Change 5 — Intel-Only `hkslReflexGetState`
 
-Add the wrapper near the existing Reflex wrappers:
+Implement the hook close to the existing `hkslReflexSetOptions()` / `hkslReflexSleep()` functions.
+
+The original call must always run first.
+
+Recommended implementation shape:
 
 ```cpp
 sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
 {
-    auto result = o_slReflexGetState(state);
-    const bool originalAvailable = state.lowLatencyAvailable;
+    const auto result = o_slReflexGetState(state);
+    const bool originalLowLatencyAvailable = state.lowLatencyAvailable;
 
-    const bool shouldFixAvailability =
+    bool shouldOverride =
         result == sl::Result::eOk &&
-        State::Instance().streamlineVersion.major > 1 &&
-        (State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailability) &&
+        (State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel) &&
         Config::Instance()->StreamlineSpoofing.value_or_default() &&
         fakenvapi::isUsingAsMainNvapi();
 
-    if (shouldFixAvailability)
-        state.lowLatencyAvailable = true;
+    VendorId::Value vendorId = VendorId::Invalid;
 
-    // Add low-volume diagnostic logging here; see the logging section below.
+    if (shouldOverride)
+    {
+        const auto primaryGpu = IdentifyGpu::getPrimaryGpu();
+        vendorId = primaryGpu.vendorId;
+
+        if (vendorId == VendorId::Intel)
+            state.lowLatencyAvailable = true;
+    }
+
+    // Bounded / state-change diagnostics here.
 
     return result;
 }
 ```
 
-The exact formatting may be adjusted by clang-format.
+The exact local-variable arrangement may be adjusted to match surrounding style, but all semantic guards are mandatory.
 
-## 12.1 Required guards
+## Mandatory guard order
 
-The override must require all of the following:
+Prefer cheap guards before GPU lookup:
 
-```text
-original slReflexGetState result == sl::Result::eOk
-Streamline version is SL2+
-FixSlReflexAvailability quirk is active
-StreamlineSpoofing is enabled
-fake NVAPI is being used as the main NVAPI
+1. original call returned `sl::Result::eOk`;
+2. game quirk is active;
+3. `StreamlineSpoofing` is enabled;
+4. fake NVAPI is the main NVAPI;
+5. actual primary GPU vendor is `VendorId::Intel`.
+
+Only after all five conditions are satisfied may the code force:
+
+```cpp
+state.lowLatencyAvailable = true;
 ```
 
-These conditions are intentionally redundant with the function-selection quirk check in some places.
+## Vendor failure behavior
 
-The inner guards document and enforce the exact compatibility boundary.
+If GPU discovery returns:
 
-## 12.2 Why `isLowLatencyActive()` must NOT be a guard
+```cpp
+VendorId::Invalid
+```
 
-Do not use:
+or any vendor other than Intel, do not override.
+
+Fail closed.
+
+Do not treat `Invalid` as Intel and do not cache an early `Invalid` result permanently.
+
+If an implementation chooses to cache the vendor check for efficiency, it must only cache after obtaining a valid non-`Invalid` vendor result.
+
+A simple uncached lookup after the cheap guards is acceptable for the initial patch and is preferable to a fragile early cache.
+
+---
+
+# 14. Do Not Gate on `isLowLatencyActive()`
+
+Do not add:
 
 ```cpp
 fakenvapi::isLowLatencyActive()
 ```
 
-as a prerequisite for returning availability.
+as a prerequisite for the availability override.
 
-The game may call `slReflexGetState()` specifically to decide whether it should expose the UI that lets the user enable Reflex.
+The affected game may query capability before the user is able to enable Reflex.
 
-Requiring low latency to already be active would create a circular dependency:
+That creates a circular dependency:
 
 ```text
-Reflex UI disabled
- -> user cannot enable Reflex
- -> low latency never becomes active
- -> availability guard remains false
- -> Reflex UI stays disabled
+UI needs lowLatencyAvailable == true
+    -> user can enable Reflex
+    -> low-latency mode becomes active
 ```
 
-This would defeat the purpose of the compatibility fix.
+Requiring low latency to already be active would defeat the purpose of the compatibility fix.
 
-## 12.3 Do not change any other ReflexState fields
+---
+
+# 15. Do Not Modify Other `ReflexState` Fields
 
 Only change:
 
@@ -571,344 +643,170 @@ Only change:
 state.lowLatencyAvailable
 ```
 
-Do not force or synthesize:
+Do not force:
 
-```text
-latencyReportAvailable
-flashIndicatorDriverControlled
-statsWindowMessage
-frameReport[]
-frameReport2[]
+```cpp
+state.latencyReportAvailable
+state.flashIndicatorDriverControlled
+state.statsWindowMessage
+frame reports
 ```
 
-The quirk exists only to correct the game's capability gate.
+Preserve every other value returned by the original Streamline function.
+
+If the original call returns anything other than `sl::Result::eOk`, return it unchanged and do not force availability.
 
 ---
 
-# 13. Diagnostic Logging
+# 16. Diagnostic Logging Requirements
 
-Logging is required in this same PR because the original reproduction logs were from the older `8dac650` build and did not directly log the returned `slReflexGetState()` value.
+The diagnostic and fix stay in the same PR.
 
-The new build must let us confirm both:
+We need to confirm:
+
+- the hook is actually requested by the target game;
+- the original current-branch `lowLatencyAvailable` value;
+- the detected real GPU vendor;
+- whether the Intel-only override was applied;
+- whether Reflex markers/IDs become active after the user enables Reflex.
+
+Do not log every `slReflexGetState` call.
+
+Use a once-only or state-change pattern consistent with the existing logger style.
+
+Useful diagnostic content:
 
 ```text
-what Streamline originally returned
-what OptiScaler returned after the quirk
+Reflex GetState: result=eOk, vendor=Intel, original lowLatencyAvailable=false, returned=true, quirk=true
 ```
 
-Do not log every `slReflexGetState()` call.
+For AMD/NVIDIA negative tests, a single debug-level state record is enough if useful:
 
-Games may poll this function frequently.
-
-Use first-call or state-change logging.
-
-A simple state-change implementation is preferred over introducing a new logging abstraction.
-
-Example:
-
-```cpp
-static int lastOriginalAvailable = -1;
-static int lastReturnedAvailable = -1;
-
-const int originalValue = originalAvailable ? 1 : 0;
-const int returnedValue = state.lowLatencyAvailable ? 1 : 0;
-
-if (lastOriginalAvailable != originalValue || lastReturnedAvailable != returnedValue)
-{
-    LOG_INFO("SL Reflex availability quirk: original = {}, returned = {}", originalAvailable,
-             state.lowLatencyAvailable);
-
-    lastOriginalAvailable = originalValue;
-    lastReturnedAvailable = returnedValue;
-}
+```text
+Reflex GetState: vendor=AMD, Intel availability quirk not applied
+Reflex GetState: vendor=Nvidia, Intel availability quirk not applied
 ```
 
-If the project already has a cleaner local once/change logging pattern at implementation time, use it instead.
+Do not produce per-frame INFO spam.
 
-Requirements are:
+Suggested behavior:
 
-- no per-frame log spam;
-- original value is visible;
-- returned value is visible;
-- log only exists because the game quirk routed through this wrapper.
-
-Do not add verbose logging to global fake-NVAPI calls for this PR.
+- first relevant call: DEBUG or INFO once;
+- override transition: INFO once;
+- subsequent identical calls: no log.
 
 ---
 
-# 14. Expected Combined Implementation Shape
+# 17. Required Runtime Behavior Matrix
 
-The final Reflex section should conceptually resemble the following.
+## 17.1 Intel + RE9
 
-## Header
-
-```cpp
-// Reflex
-inline static sl::ReflexMode reflexGamesLastMode = sl::ReflexMode::eOff;
-inline static PFN_slGetPluginFunction o_reflex_slGetPluginFunction = nullptr;
-inline static PFN_slSetConstants_sl1 o_reflex_slSetConstants_sl1 = nullptr;
-inline static PFN_slOnPluginLoad o_reflex_slOnPluginLoad = nullptr;
-inline static decltype(&slReflexSetOptions) o_slReflexSetOptions = nullptr;
-inline static decltype(&slReflexGetState) o_slReflexGetState = nullptr;
-inline static decltype(&slReflexSleep) o_slReflexSleep = nullptr;
-
-static bool hkreflex_slOnPluginLoad(sl::param::IParameters* params, const char* loaderJSON,
-                                    const char** pluginJSON);
-static sl::Result hkslReflexSetOptions(const sl::ReflexOptions& options);
-static sl::Result hkslReflexGetState(sl::ReflexState& state);
-static sl::Result hkslReflexSleep(const sl::FrameToken& frame);
-```
-
-## Implementation
-
-```cpp
-sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
-{
-    auto result = o_slReflexGetState(state);
-    const bool originalAvailable = state.lowLatencyAvailable;
-
-    if (result == sl::Result::eOk && State::Instance().streamlineVersion.major > 1 &&
-        (State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailability) &&
-        Config::Instance()->StreamlineSpoofing.value_or_default() && fakenvapi::isUsingAsMainNvapi())
-    {
-        state.lowLatencyAvailable = true;
-    }
-
-    static int lastOriginalAvailable = -1;
-    static int lastReturnedAvailable = -1;
-
-    const int originalValue = originalAvailable ? 1 : 0;
-    const int returnedValue = state.lowLatencyAvailable ? 1 : 0;
-
-    if (lastOriginalAvailable != originalValue || lastReturnedAvailable != returnedValue)
-    {
-        LOG_INFO("SL Reflex availability quirk: original = {}, returned = {}", originalAvailable,
-                 state.lowLatencyAvailable);
-        lastOriginalAvailable = originalValue;
-        lastReturnedAvailable = returnedValue;
-    }
-
-    return result;
-}
-```
-
-and in the plugin-function resolver:
-
-```cpp
-if (strcmp(functionName, "slReflexGetState") == 0 &&
-    (State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailability))
-{
-    o_slReflexGetState = (decltype(&slReflexGetState)) o_reflex_slGetPluginFunction(functionName);
-    return &hkslReflexGetState;
-}
-```
-
-This code is illustrative but should be very close to the final implementation unless compilation or current local style requires a small adjustment.
-
----
-
-# 15. Explicit Non-Goals
-
-Do not broaden this PR into any of the following:
-
-- global `NvAPI_D3D_GetSleepStatus` changes;
-- global fake-NVAPI capability spoof changes;
-- changes to `LowLatencyCtx`;
-- changes to XeLL initialization;
-- global `slReflexGetState` forcing;
-- changes to `slIsFeatureSupported` for Reflex;
-- extra plugin JSON capability forcing;
-- additional SystemCaps spoofing;
-- changes to Reflex marker routing;
-- changes to `ReflexHooks::hkNvAPI_D3D_SetLatencyMarker`;
-- changes to frame generation logic;
-- changes to `latencyReportAvailable`;
-- adding new user-facing config options;
-- adding demo executables without reproduction evidence;
-- unrelated cleanup/refactoring.
-
-If the proposed quirk does not solve the runtime issue, stop and collect the new logs rather than expanding the patch speculatively.
-
----
-
-# 16. Build / Static Validation
-
-Follow the repository contribution rules.
-
-In particular:
-
-- every modified `.cpp` must keep `"pch.h"` as the first non-comment include;
-- do not include `pch.h` in `Streamline_Hooks.h`;
-- do not add dependencies to `pch.h` for this change.
-
-Required source checks before opening/updating the PR:
+Conditions:
 
 ```text
-1. FixSlReflexAvailability exists exactly once in the enum.
-2. Existing GameQuirk enum entries were not reordered.
-3. printQuirks contains the new quirk.
-4. Only re9.exe and pragmata.exe receive the new quirk.
-5. Streamline_Hooks.h has original pointer + hook declaration + VALIDATE_MEMBER_HOOK.
-6. hkreflex_slGetPluginFunction routes slReflexGetState only when the quirk is active.
-7. hkslReflexGetState calls the original first.
-8. Non-eOk results are never converted into successful capability reports.
-9. Only lowLatencyAvailable is modified.
-10. No fake-NVAPI production files changed.
-```
-
-Run the normal project formatting/build checks available in the development environment.
-
-Do not mark the work complete if the solution only compiles but the routing guards differ from the above semantics.
-
----
-
-# 17. Runtime Test Matrix
-
-## Test A — RE9 / Intel / affected path
-
-Environment:
-
-```text
-Executable: re9.exe
-GPU: Intel
-StreamlineSpoofing: enabled
-fake NVAPI: main NVAPI path
-```
-
-Expected startup evidence:
-
-```text
-Quirks: includes "Fix Streamline Reflex availability"
-sl.reflex loads normally
-```
-
-Expected GetState evidence if the hypothesis is correct:
-
-```text
-SL Reflex availability quirk: original = false, returned = true
-```
-
-Expected game behavior:
-
-```text
-Reflex option becomes selectable/enabled
-```
-
-After enabling Reflex, expected follow-up behavior:
-
-```text
-Reflex marker path becomes active
-XeFG dispatch Reflex Id is no longer permanently 0
-```
-
-Do not require the exact frame ID to match OptiScaler's internal ID; the important validation is that real non-zero/increasing Reflex frame IDs begin appearing.
-
-## Test B — PRAGMATA / Intel / affected path
-
-Repeat Test A using:
-
-```text
-Executable: pragmata.exe
-```
-
-Expected results are the same.
-
-## Test C — affected game with Streamline spoofing disabled
-
-Use either affected executable but set Streamline spoofing off.
-
-Expected:
-
-```text
-wrapper may be selected because the game quirk is active
-original slReflexGetState result is preserved
-lowLatencyAvailable is NOT forced to true by this quirk
-```
-
-## Test D — affected game on native NVIDIA
-
-Expected:
-
-```text
-fakenvapi::isUsingAsMainNvapi() == false
-native Streamline result is preserved
-no forced lowLatencyAvailable=true
-```
-
-The wrapper itself may still be selected by the game quirk; the returned native state must remain untouched.
-
-## Test E — MHW / DD2 regression control
-
-Expected:
-
-```text
-FixSlReflexAvailability quirk is absent
-slReflexGetState is not replaced by the new wrapper
-existing Reflex behavior remains unchanged
-```
-
-This is an important architectural acceptance criterion: non-quirked games should bypass the new compatibility shim entirely.
-
-## Test F — original GetState failure
-
-If the original call returns anything other than:
-
-```cpp
-sl::Result::eOk
+exe = re9.exe
+real primary GPU = Intel
+StreamlineSpoofing = true
+fake NVAPI = main NVAPI
 ```
 
 Expected:
 
 ```text
-state is not force-enabled
-original result is returned unchanged
+FixSlReflexAvailabilityOnIntel quirk present
+slReflexGetState intercepted
+original result logged
+original lowLatencyAvailable observed
+returned lowLatencyAvailable = true when original result == eOk
+Reflex menu becomes selectable
+when user enables Reflex, normal marker path becomes active
+XeFG Reflex Id should become non-zero/increasing rather than remaining 0
+```
+
+## 17.2 Intel + PRAGMATA
+
+Same expectations as RE9.
+
+## 17.3 AMD + RE9 / PRAGMATA
+
+Expected:
+
+```text
+quirk may be present because selection is executable-based
+slReflexGetState may be intercepted
+VendorId::AMD guard fails
+state.lowLatencyAvailable remains exactly what original Streamline returned
+no forced Reflex availability
+```
+
+This is a mandatory negative test.
+
+## 17.4 Native NVIDIA + RE9 / PRAGMATA
+
+Expected:
+
+```text
+VendorId::Nvidia guard fails
+native Streamline result passes through unchanged
+no forced state
+no fake-NVAPI-specific behavior introduced
+```
+
+This is a mandatory negative test.
+
+## 17.5 Intel + DD2 / MHW
+
+Expected:
+
+```text
+new quirk absent
+new GetState compatibility path not selected
+existing working Reflex behavior unchanged
+```
+
+## 17.6 Original GetState returns error
+
+Expected:
+
+```text
+result != eOk
+no override regardless of vendor
+original error returned unchanged
+```
+
+## 17.7 GPU vendor unavailable
+
+Expected:
+
+```text
+VendorId::Invalid
+no override
+retry naturally on later calls if the implementation does not permanently cache Invalid
 ```
 
 ---
 
-# 18. Interpretation of Test Results
+# 18. Build / Static Verification
 
-## Case 1 — original=false, returned=true, UI unlocks, markers become active
+Before runtime testing:
 
-This is the expected success case.
+1. build the normal project configuration used by upstream development;
+2. confirm no new warnings from the changed files;
+3. verify `VALIDATE_MEMBER_HOOK` accepts the new function signature;
+4. search the final diff for accidental global behavior changes;
+5. confirm no changes under fake NVAPI / LowLatencyCtx;
+6. confirm the new quirk appears only on `re9.exe` and `pragmata.exe`;
+7. confirm `VendorId::Intel` is an explicit runtime requirement for the override;
+8. confirm AMD/NVIDIA paths preserve the original state.
 
-The patch confirms that RE9 / PRAGMATA were using the runtime Reflex availability state as an additional UI/activation gate.
+Useful searches:
 
-Keep the PR narrow.
-
-Do not add extra fake-NVAPI changes after success.
-
-## Case 2 — original=true before override
-
-The hypothesis is not confirmed for the current build.
-
-Because the wrapper only returns true when it was already true, the quirk provides no meaningful correction.
-
-Do not upstream a no-op quirk merely because it compiles.
-
-Capture the new log and investigate the next gating stage.
-
-## Case 3 — original=false, returned=true, UI still disabled
-
-The runtime availability check is real but not the only gate.
-
-Do not immediately add more forced state.
-
-Capture:
-
-- plugin load logs;
-- GetState logs;
-- SetOptions activity;
-- marker activity;
-- any game-side NVAPI queries visible in OptiScaler.
-
-Then design the next smallest quirk separately.
-
-## Case 4 — UI unlocks but Reflex IDs stay permanently zero
-
-The UI gate was fixed, but activation/marker routing has another problem.
-
-Do not mix a second speculative marker fix into this PR unless the new logs clearly prove it is required and the additional change remains game-quirked.
+```text
+FixSlReflexAvailabilityOnIntel
+slReflexGetState
+lowLatencyAvailable
+VendorId::Intel
+```
 
 ---
 
@@ -920,7 +818,7 @@ Create the implementation branch from:
 Reflex_RE9_Pragmata
 ```
 
-Suggested branch:
+Suggested head:
 
 ```text
 fix/re9-pragmata-reflex-availability-quirk
@@ -933,147 +831,104 @@ base: Reflex_RE9_Pragmata
 head: fix/re9-pragmata-reflex-availability-quirk
 ```
 
-Do not target fork `master` yet.
+Do not target `master` yet.
 
-Do not merge before runtime testing in both main executables.
+Do not merge before Intel runtime validation.
 
-Keep implementation and diagnostic logging in the same PR.
-
-Do not create a separate logging-only PR.
+Keep diagnostics and the compatibility correction in the same PR so the first test build can both prove the hypothesis and validate the fix.
 
 ---
 
-# 20. Suggested PR Title
+# 20. PR Description Requirements
+
+The PR description should clearly distinguish old reproduction evidence from the current patch.
+
+Recommended explanation:
 
 ```text
-Fix Streamline Reflex availability in RE9 and PRAGMATA
+The original reproduction logs came from OptiScaler 0.9.5-pre4 (8dac650).
+Both RE9 and PRAGMATA loaded sl.reflex and initialized the low-latency backend, but all observed XeFG dispatches retained Reflex Id 0. Comparison logs from MHW and DD2 showed non-zero Reflex IDs.
+
+Current OptiScaler already implements fake-NVAPI NvAPI_D3D_GetSleepStatus and Reflex plugin-load SystemCaps spoofing, but does not intercept the runtime slReflexGetState value returned to the game.
+
+This patch adds a game quirk for re9.exe and pragmata.exe and adjusts only lowLatencyAvailable at the Streamline GetState boundary. The override is additionally restricted to real Intel primary GPUs, Streamline spoofing, fake NVAPI as the main NVAPI, and successful original GetState calls. AMD and native NVIDIA retain the original Streamline result unchanged.
 ```
 
-Alternative if the maintainer prefers explicit quirk wording:
+Do not claim the hypothesis is proven until the new diagnostic log captures the original current-branch state.
+
+---
+
+# 21. Acceptance Criteria
+
+The task is complete only when all of the following are true:
+
+- [ ] New deep-code quirk added without reordering existing enum entries.
+- [ ] Preferred quirk name is `FixSlReflexAvailabilityOnIntel`.
+- [ ] Quirk registered only for `re9.exe` and `pragmata.exe`.
+- [ ] `printQuirks()` updated using existing style.
+- [ ] `slReflexGetState` original pointer and hook declaration added.
+- [ ] `VALIDATE_MEMBER_HOOK` added.
+- [ ] `hkreflex_slGetPluginFunction()` intercepts GetState only through the game quirk path.
+- [ ] Original `slReflexGetState()` always runs first.
+- [ ] Override requires `result == eOk`.
+- [ ] Override requires `StreamlineSpoofing` enabled.
+- [ ] Override requires fake NVAPI as main NVAPI.
+- [ ] Override requires actual `IdentifyGpu::getPrimaryGpu().vendorId == VendorId::Intel`.
+- [ ] `VendorId::Invalid` fails closed.
+- [ ] AMD receives no forced availability.
+- [ ] NVIDIA receives no forced availability.
+- [ ] Only `lowLatencyAvailable` is modified.
+- [ ] Diagnostic logging is bounded and not per-frame spam.
+- [ ] No global fake-NVAPI / LowLatencyCtx behavior changes.
+- [ ] RE9 Intel runtime test performed.
+- [ ] PRAGMATA Intel runtime test performed.
+- [ ] At least one non-Intel negative-path verification performed if hardware/testing access permits.
+- [ ] Draft PR targets `Reflex_RE9_Pragmata`.
+- [ ] Do not merge before runtime results are reviewed.
+
+---
+
+# 22. Stop Conditions
+
+Stop and report rather than broadening the patch if any of the following occurs:
+
+- the target game never requests `slReflexGetState`;
+- current-branch original `lowLatencyAvailable` is already consistently true before the fix;
+- the Intel vendor cannot be determined reliably at the hook point;
+- forcing only `lowLatencyAvailable` does not unlock the game option;
+- the option unlocks but enabling it still produces no Reflex markers/IDs;
+- the override causes errors inside Streamline or XeLL;
+- fixing the issue appears to require changing fake NVAPI globally.
+
+In those cases, preserve the diagnostic evidence and return for design review rather than expanding scope automatically.
+
+---
+
+# 23. Final Design Summary
+
+The desired upstream-friendly implementation is:
 
 ```text
-Add RE9/PRAGMATA Streamline Reflex availability quirk
+Quirks.h
+    re9.exe / pragmata.exe
+        -> FixSlReflexAvailabilityOnIntel
+
+Streamline_Hooks.cpp
+    game asks for slReflexGetState
+        -> quirk active?
+            no  -> original function
+            yes -> return narrow hook
+
+hkslReflexGetState
+    -> call original first
+    -> require eOk
+    -> require StreamlineSpoofing
+    -> require fake NVAPI main
+    -> inspect real primary GPU via IdentifyGpu
+    -> require VendorId::Intel
+    -> set only lowLatencyAvailable = true
+    -> preserve all other state
+    -> bounded diagnostic log
 ```
 
----
-
-# 21. Suggested PR Description Core
-
-Use wording close to the following:
-
-```markdown
-## Summary
-
-Adds a narrowly scoped game quirk for RE9 and PRAGMATA to preserve OptiScaler's Streamline spoofing compatibility through the runtime Reflex availability check.
-
-Both games already load `sl.reflex` successfully when using OptiScaler's fake NVAPI / Streamline spoofing path, but their Reflex option remains unavailable. Older reproduction logs also showed every observed XeFG dispatch retaining `Reflex Id: 0`, while MHW/DD2 control logs on the same OptiScaler build had active non-zero Reflex IDs.
-
-The current code already spoofs Reflex SystemCaps during plugin load and fake NVAPI already implements `NvAPI_D3D_GetSleepStatus`. The missing title-specific compatibility boundary is the `slReflexGetState()` value returned to the game.
-
-This patch:
-
-- adds `GameQuirk::FixSlReflexAvailability`;
-- enables it only for `re9.exe` and `pragmata.exe`;
-- hooks `slReflexGetState` only for games with that quirk;
-- calls Streamline first and only adjusts `lowLatencyAvailable` after a successful original call;
-- requires Streamline spoofing + fake NVAPI before applying the override;
-- leaves native NVIDIA and all non-quirked games unchanged;
-- includes low-volume diagnostics for the original/returned availability value.
-
-No global fake-NVAPI behavior is changed.
-```
-
-Also explicitly disclose:
-
-```text
-The original reproduction logs were captured on 0.9.5-pre4 / 8dac650.
-The current patch is against newer source, so the included GetState logging is used to validate that the same runtime gating behavior still reproduces before upstreaming.
-```
-
-This transparency is preferable to presenting the older logs as if they came from the current branch.
-
----
-
-# 22. Upstream-Friendly Review Constraints
-
-Before considering an upstream PR, verify the final diff has these characteristics:
-
-```text
-+ one GameQuirk enum value
-+ two existing game-table entries extended
-+ one printQuirks string
-+ one Streamline original function pointer
-+ one Streamline hook declaration/validation
-+ one small GetState wrapper
-+ one quirk-gated resolver branch
-+ low-volume diagnostic logging
-```
-
-There should be no unrelated architectural changes.
-
-The patch should be understandable to an upstream reviewer without needing to accept a new global policy for fake NVAPI.
-
-The explanation should focus on:
-
-1. both games already pass initial Streamline Reflex plugin capability/loading;
-2. current fake NVAPI already has the low-latency API surface;
-3. the games appear to apply a stricter runtime availability gate;
-4. OptiScaler already uses deep game quirks for comparable Streamline/Reflex compatibility exceptions;
-5. the patch changes behavior only for the two reproduced executables.
-
----
-
-# 23. Stop Conditions
-
-Stop implementation and report results rather than broadening scope if any of the following occurs:
-
-- `slReflexGetState` is not requested by either target game on the current build;
-- the original returned `lowLatencyAvailable` is already true before the override;
-- the wrapper causes a crash or Streamline integration error;
-- native NVIDIA behavior is altered;
-- non-quirked games route through the new wrapper;
-- the issue requires changing fields other than `lowLatencyAvailable` without new evidence;
-- fixing the UI requires broad fake-NVAPI changes.
-
-A failed hypothesis with strong diagnostic evidence is a valid result.
-
-Do not turn this targeted experiment into a general Reflex rewrite.
-
----
-
-# 24. Completion Checklist
-
-The task is complete only when all applicable items below are satisfied:
-
-- [ ] implementation branch was created from `Reflex_RE9_Pragmata`;
-- [ ] `FixSlReflexAvailability` was appended without reordering existing quirk values;
-- [ ] only `re9.exe` and `pragmata.exe` gained the new quirk;
-- [ ] `printQuirks()` reports the new quirk;
-- [ ] `Streamline_Hooks.h` contains pointer, declaration, and signature validation;
-- [ ] `hkreflex_slGetPluginFunction()` hooks GetState only for the new quirk;
-- [ ] original `slReflexGetState()` is always called first;
-- [ ] non-`eOk` results are never overridden;
-- [ ] the override requires SL2+, Streamline spoofing, and fake NVAPI main mode;
-- [ ] only `lowLatencyAvailable` is modified;
-- [ ] logging is state-change/low-volume rather than per-frame spam;
-- [ ] no fake-NVAPI production code was changed;
-- [ ] project builds successfully;
-- [ ] RE9 runtime result recorded;
-- [ ] PRAGMATA runtime result recorded;
-- [ ] MHW/DD2 remain outside the new hook path;
-- [ ] native NVIDIA path remains unforced;
-- [ ] Draft PR targets `Reflex_RE9_Pragmata`;
-- [ ] PR description clearly distinguishes old `8dac650` reproduction logs from current-source validation;
-- [ ] PR remains unmerged until runtime results are reviewed.
-
----
-
-# 25. Final Implementation Principle
-
-Use the existing OptiScaler quirk system as the compatibility boundary.
-
-Do not make fake NVAPI globally claim more than it already does.
-
-Do not change Reflex semantics for unrelated games.
-
-For RE9 and PRAGMATA only, preserve the existing Streamline path and correct the single runtime availability value the games appear to use as their additional Reflex gate.
+This keeps the workaround restricted by both **game** and **real GPU vendor**, avoids changing global fake-NVAPI semantics, and mirrors OptiScaler's existing quirk-driven compatibility style as closely as practical.
