@@ -365,6 +365,12 @@ class State
 
     IFeature* currentFeature = nullptr;
     IFGFeature_Dx12* currentFG = nullptr;
+    // Non-owning swapchain aliases.
+    //
+    // These fields do not own COM references. Assigning a pointer here does not
+    // transfer ownership and these aliases must never be used to drain an
+    // object's reference count. The concrete owner (game/runtime/wrapper/etc.)
+    // is responsible for releasing the references it acquired.
     IDXGISwapChain* currentSwapchain = nullptr;
     IDXGISwapChain* currentWrappedSwapchain = nullptr;
     IDXGISwapChain* currentRealSwapchain = nullptr;

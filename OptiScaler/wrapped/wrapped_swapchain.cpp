@@ -16,6 +16,7 @@
 #include <d3d12.h>
 #include <misc/IdentifyGpu.h>
 #include <hooks/Xell_Hooks.h>
+#include <utility>
 
 #include <magic_enum.hpp>
 
@@ -684,15 +685,21 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
         OwnedLockGuard lock(_localMutex, 999);
 #endif
 
+        auto& state = State::Instance();
+
         MenuOverlayDx::CleanupRenderTarget(true, _handle);
 
-        if (State::Instance().currentSwapchain == this)
-            State::Instance().currentSwapchain = nullptr;
+        if (state.currentSwapchain == this)
+            state.currentSwapchain = nullptr;
 
-        if (State::Instance().currentRealSwapchain == this)
-            State::Instance().currentRealSwapchain = nullptr;
+        if (state.currentWrappedSwapchain == this)
+            state.currentWrappedSwapchain = nullptr;
 
-        auto fg = State::Instance().currentFG;
+        auto* real = std::exchange(_real, nullptr);
+        if (state.currentRealSwapchain == real)
+            state.currentRealSwapchain = nullptr;
+
+        auto fg = state.currentFG;
         bool releaseCompleted = false;
         if (fg != nullptr)
         {
@@ -714,9 +721,9 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
         }
 
         if (releaseCompleted)
-            State::Instance().currentFGSwapchain = nullptr;
+            state.currentFGSwapchain = nullptr;
 
-        auto refCount = _real->Release();
+        const auto refCount = real != nullptr ? real->Release() : 0;
 
         // Disabled for now, cause issues with some games
         /*
