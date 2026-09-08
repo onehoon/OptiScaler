@@ -262,7 +262,7 @@ class XeFGProxy
     {
         if (_xefgVersion.major == 0 && _xefgSwapChainGetVersion != nullptr)
         {
-            if (auto result = _xefgSwapChainGetVersion(&_xefgVersion); result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (auto result = _xefgSwapChainGetVersion(&_xefgVersion); static_cast<int32_t>(result) >= 0)
             {
                 LOG_INFO("XeFG Version: v{}.{}.{}", _xefgVersion.major, _xefgVersion.minor, _xefgVersion.patch);
             }

@@ -693,14 +693,28 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
             State::Instance().currentRealSwapchain = nullptr;
 
         auto fg = State::Instance().currentFG;
-        if (fg != nullptr && fg->Mutex.getOwner() != 1 && fg->SwapchainContext() != nullptr)
+        bool releaseCompleted = false;
+        if (fg != nullptr)
         {
-            fg->Deactivate();
-            fg->ReleaseSwapchain(_handle);
+            if (fg->Mutex.getOwner() == 1)
+            {
+                releaseCompleted = false;
+                LOG_WARN("[XeFG][Lifecycle] action = wrapped_release_deferred, "
+                         "reason = release_already_in_progress");
+            }
+            else
+            {
+                // ReleaseSwapchain() acquires the lifecycle mutex and performs
+                // DestroyFGContext() -> Deactivate() itself.
+                releaseCompleted = fg->ReleaseSwapchain(_handle);
 
-            if (State::Instance().currentFGSwapchain != nullptr)
-                State::Instance().currentFGSwapchain = nullptr;
+                if (!releaseCompleted)
+                    LOG_ERROR("[XeFG][Lifecycle] action = wrapped_release_aborted, reason = release_not_completed");
+            }
         }
+
+        if (releaseCompleted)
+            State::Instance().currentFGSwapchain = nullptr;
 
         auto refCount = _real->Release();
 

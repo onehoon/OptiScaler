@@ -244,20 +244,34 @@ ULONG STDMETHODCALLTYPE Dx11wDx12SC::Release()
 
         FGHooks::ClearDx12InteropPresentSC(_fgSwapChain);
 
-        if (State::Instance().currentFGSwapchain == _fgSwapChain)
-            State::Instance().currentFGSwapchain = nullptr;
-
         if (State::Instance().currentD3D11Device == _dx11Device)
             State::Instance().currentD3D11Device = nullptr;
 
         State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
 
         auto fg = State::Instance().currentFG;
-        if (fg != nullptr && fg->Mutex.getOwner() != 1 && fg->SwapchainContext() != nullptr)
+        bool releaseCompleted = (fg == nullptr);
+        if (fg != nullptr)
         {
-            fg->Deactivate();
-            fg->ReleaseSwapchain(_handle);
+            const auto releaseOwner = fg->Mutex.getOwner();
+
+            if (releaseOwner == 1)
+            {
+                releaseCompleted = false;
+                LOG_WARN("[XeFG][Lifecycle] action = dx11_dx12_release_deferred, "
+                         "reason = release_already_in_progress");
+            }
+            else
+            {
+                releaseCompleted = fg->ReleaseSwapchain(_handle);
+
+                if (!releaseCompleted)
+                    LOG_ERROR("[XeFG][Lifecycle] action = dx11_dx12_release_aborted, reason = release_not_completed");
+            }
         }
+
+        if (releaseCompleted && State::Instance().currentFGSwapchain == _fgSwapChain)
+            State::Instance().currentFGSwapchain = nullptr;
 
         delete this;
     }

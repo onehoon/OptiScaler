@@ -52,7 +52,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
     {
         auto result = XeFGProxy::D3D12CreateContext()(device, &_swapChainContext);
 
-        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) < 0)
         {
             LOG_ERROR("D3D12CreateContext error: {} ({})", magic_enum::enum_name(result), (UINT) result);
             return false;
@@ -62,7 +62,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
         result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                  nullptr);
 
-        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) < 0)
         {
             LOG_ERROR("SetLoggingCallback error: {} ({})", magic_enum::enum_name(result), (UINT) result);
         }
@@ -86,7 +86,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, fakenvapi::getCurrentContext());
 
-            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(result) < 0)
             {
                 LOG_ERROR("SetLatencyReduction error: {} ({})", magic_enum::enum_name(result), (UINT) result);
                 return false;
@@ -112,7 +112,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, (xell_context_handle_t) localXellContext);
 
-            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(result) < 0)
             {
                 LOG_ERROR("SetLatencyReduction error: {} ({})", magic_enum::enum_name(result), (UINT) result);
                 return false;
@@ -130,6 +130,23 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
     } while (false);
 
     return createResult;
+}
+
+bool XeFG_Dx12::AbortSwapchainInitialization(const char* stage)
+{
+    if (_swapChainContext == nullptr)
+        return false;
+
+    LOG_ERROR("[XeFG][Lifecycle] action = init_aborted, stage = {}, context = {:X}", stage,
+              (size_t) _swapChainContext);
+
+    if (!DestroySwapchainContext())
+    {
+        LOG_ERROR("[XeFG][Lifecycle] action = init_cleanup_failed, stage = {}, context = {:X}", stage,
+                  (size_t) _swapChainContext);
+    }
+
+    return false;
 }
 
 const char* XeFG_Dx12::Name()
@@ -166,26 +183,29 @@ bool XeFG_Dx12::DestroySwapchainContext()
 {
     LOG_DEBUG("");
 
-    if (_swapChainContext != nullptr && !State::Instance().isShuttingDown)
+    if (_swapChainContext == nullptr || State::Instance().isShuttingDown)
+        return true;
+
+    auto context = _swapChainContext;
+    _swapChainContext = nullptr;
+
+    LOG_INFO("[XeFG][Lifecycle] action = destroy_begin, context = {:X}", (size_t) context);
+
+    auto result = XeFGProxy::Destroy()(context);
+
+    LOG_INFO("[XeFG][Lifecycle] action = destroy_return, context = {:X}, result = {} ({})", (size_t) context,
+             magic_enum::enum_name(result), static_cast<int32_t>(result));
+
+    if (static_cast<int32_t>(result) < 0)
     {
-        auto context = _swapChainContext;
-        _swapChainContext = nullptr;
-
-        auto result = XeFGProxy::Destroy()(context);
-
-        LOG_INFO("Destroy result: {} ({})", magic_enum::enum_name(result), (UINT) result);
-
-        // Set it back because context is not destroyed
-        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
-        {
-            _swapChainContext = context;
-        }
-        else
-        {
-            State::Instance().currentFGSwapchain = nullptr;
-        }
+        _swapChainContext = context;
+        _swapchainRecreationBlocked = true;
+        LOG_ERROR("[XeFG][Lifecycle] action = destroy_failed, context = {:X}, retained = true", (size_t) context);
+        return false;
     }
 
+    _swapchainRecreationBlocked = false;
+    State::Instance().currentFGSwapchain = nullptr;
     return true;
 }
 
@@ -244,6 +264,21 @@ xefg_swapchain_d3d12_resource_data_t XeFG_Dx12::GetResourceData(FG_ResourceType 
 bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQueue, DXGI_SWAP_CHAIN_DESC* desc,
                                 IDXGISwapChain** swapChain, bool readyToRelease)
 {
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex, std::try_to_lock);
+    if (!lifecycleLock.owns_lock())
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
+                 "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
+    if (_swapchainRecreationBlocked)
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
+                 "reason = previous_destroy_failed");
+        return false;
+    }
+
     if (State::Instance().currentFGSwapchain != nullptr && _hwnd == desc->OutputWindow)
     {
         if (Config::Instance()->FGPreserveSwapChain.value_or_default())
@@ -261,7 +296,12 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
-            ReleaseSwapchain(_hwnd);
+            if (!ReleaseSwapchainLocked(_hwnd))
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
+                          "reason = release_not_completed");
+                return false;
+            }
 
             // Not sure why but XeFG sometimes doesn't release the swapchain properly
             // so we force release it here to be able to recreate swapchain for same hwnd
@@ -289,17 +329,15 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         if (State::Instance().currentD3D12Device == nullptr)
             return false;
 
-        CreateSwapchainContext(State::Instance().currentD3D12Device);
-
-        if (_swapChainContext == nullptr)
-            return false;
+        if (!CreateSwapchainContext(State::Instance().currentD3D12Device))
+            return AbortSwapchainInitialization("CreateSwapchainContext");
 
         _width = desc->BufferDesc.Width;
         _height = desc->BufferDesc.Height;
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
-        if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) >= 0)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
             LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
@@ -419,18 +457,18 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                      &params);
 
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12InitFromSwapChainDesc error: {} ({:X})", magic_enum::enum_name(result), (UINT) result);
-        return false;
+        return AbortSwapchainInitialization("D3D12InitFromSwapChainDesc");
     }
 
     LOG_INFO("XeFG swapchain created");
     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12GetSwapChainPtr error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-        return false;
+        return AbortSwapchainInitialization("D3D12GetSwapChainPtr");
     }
 
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
@@ -450,6 +488,21 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
                                  DXGI_SWAP_CHAIN_DESC1* desc, DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
                                  IDXGISwapChain1** swapChain, bool readyToRelease)
 {
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex, std::try_to_lock);
+    if (!lifecycleLock.owns_lock())
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
+                 "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
+    if (_swapchainRecreationBlocked)
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
+                 "reason = previous_destroy_failed");
+        return false;
+    }
+
     if (State::Instance().currentFGSwapchain != nullptr && _hwnd == hwnd)
     {
         if (Config::Instance()->FGPreserveSwapChain.value_or_default())
@@ -466,7 +519,12 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
-            ReleaseSwapchain(_hwnd);
+            if (!ReleaseSwapchainLocked(_hwnd))
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
+                          "reason = release_not_completed");
+                return false;
+            }
 
             // Not sure why but XeFG sometimes doesn't release the swapchain properly
             // so we force release it here to be able to recreate swapchain for same hwnd
@@ -492,17 +550,15 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         if (State::Instance().currentD3D12Device == nullptr)
             return false;
 
-        CreateSwapchainContext(State::Instance().currentD3D12Device);
-
-        if (_swapChainContext == nullptr)
-            return false;
+        if (!CreateSwapchainContext(State::Instance().currentD3D12Device))
+            return AbortSwapchainInitialization("CreateSwapchainContext");
 
         _width = desc->Width;
         _height = desc->Height;
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
-        if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) >= 0)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
             LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
@@ -588,18 +644,18 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
                                                          factory12, &params);
     }
 
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12InitFromSwapChainDesc error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-        return false;
+        return AbortSwapchainInitialization("D3D12InitFromSwapChainDesc");
     }
 
     LOG_INFO("XeFG swapchain created");
     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12GetSwapChainPtr error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-        return false;
+        return AbortSwapchainInitialization("D3D12GetSwapChainPtr");
     }
 
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
@@ -652,7 +708,7 @@ void XeFG_Dx12::Activate()
     {
         auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
 
-        if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) >= 0)
         {
             _isActive = true;
             _lastDispatchedFrame = 0;
@@ -689,7 +745,7 @@ void XeFG_Dx12::Deactivate()
         if (_swapChainContext != nullptr)
         {
             result = XeFGProxy::SetEnabled()(_swapChainContext, false);
-            if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(result) >= 0)
                 _isActive = false;
         }
         else
@@ -772,7 +828,7 @@ bool XeFG_Dx12::Dispatch()
 
         auto uiResult = XeFGProxy::SetUiCompositionState()(_swapChainContext, uiState);
 
-        if (uiResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(uiResult) < 0)
             LOG_ERROR("SetUiCompositionState error: {} ({})", magic_enum::enum_name(uiResult), (UINT) uiResult);
     }
 
@@ -801,7 +857,7 @@ bool XeFG_Dx12::Dispatch()
 
             _framesToInterpolate = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
 
-            if (intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(intResult) < 0)
             {
                 LOG_ERROR("SetNumInterpolatedFrames error: {} ({})", magic_enum::enum_name(intResult),
                           (UINT) intResult);
@@ -950,7 +1006,7 @@ bool XeFG_Dx12::Dispatch()
     auto frameId = static_cast<uint32_t>(willDispatchFrame);
 
     auto result = XeFGProxy::TagFrameConstants()(_swapChainContext, frameId, &constData);
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("TagFrameConstants error: {} ({})", magic_enum::enum_name(result), (UINT) result);
 
@@ -962,7 +1018,7 @@ bool XeFG_Dx12::Dispatch()
     }
 
     result = XeFGProxy::SetPresentId()(_swapChainContext, frameId);
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("SetPresentId error: {} ({})", magic_enum::enum_name(result), (UINT) result);
 
@@ -1013,7 +1069,7 @@ bool XeFG_Dx12::Dispatch()
 
         result = XeFGProxy::D3D12TagFrameResource()(_swapChainContext, (ID3D12CommandList*) 1, frameId, &backbuffer);
 
-        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) < 0)
         {
             LOG_ERROR("D3D12TagFrameResource Backbuffer error: {} ({})", magic_enum::enum_name(result), (UINT) result);
 
@@ -1615,7 +1671,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
             LOG_DEBUG("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,
                       magic_enum::enum_name(type), magic_enum::enum_name(result), (int32_t) result);
 
-            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(result) < 0)
             {
                 State::Instance().fgChanged = true;
                 UpdateTarget();
@@ -1644,17 +1700,91 @@ void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue)
 
 bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
 {
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex, std::try_to_lock);
+    if (!lifecycleLock.owns_lock())
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = release_swapchain_deferred, "
+                 "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
+    return ReleaseSwapchainLocked(hwnd);
+}
+
+bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy)
+{
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex);
+
+    if (!releaseFinalProxy)
+    {
+        LOG_ERROR("[XeFG][Lifecycle] action = release_swapchain_aborted, "
+                  "reason = missing_final_proxy_release");
+        return false;
+    }
+
+    bool finalProxyReleased = false;
+    auto releaseFinalProxyOnce = [&]() {
+        if (finalProxyReleased)
+            return;
+
+        State::Instance().currentFGSwapchain = nullptr;
+        releaseFinalProxy();
+        finalProxyReleased = true;
+    };
+
+    const bool releaseSucceeded = ReleaseSwapchainLocked(hwnd, releaseFinalProxyOnce);
+
+    if (!finalProxyReleased)
+    {
+        // A confirmed final COM release cannot be deferred outside this
+        // lifecycle transaction. Consume it while the mutex is still held and
+        // quarantine recreation if teardown did not reach the callback.
+        _swapchainRecreationBlocked = true;
+        releaseFinalProxyOnce();
+        LOG_ERROR("[XeFG][Lifecycle] action = final_proxy_release_quarantined, "
+                  "reason = teardown_not_completed, hwnd = {:X}, context = {:X}",
+                  (size_t) hwnd, (size_t) _swapChainContext);
+    }
+
+    return releaseSucceeded;
+}
+
+bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy)
+{
     if (hwnd != _hwnd || _hwnd == NULL)
         return false;
 
     LOG_DEBUG("");
 
-    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
+    if (_swapchainReleaseInProgress.exchange(true, std::memory_order_acq_rel))
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = release_swapchain_deferred, "
+                 "reason = release_already_in_progress");
+        return false;
+    }
+
+    _swapchainReleaseOwnerThread.store(GetCurrentThreadId(), std::memory_order_release);
+
+    struct ReleaseGuard
+    {
+        std::atomic_bool& flag;
+        std::atomic<DWORD>& ownerThread;
+        ~ReleaseGuard()
+        {
+            ownerThread.store(0, std::memory_order_release);
+            flag.store(false, std::memory_order_release);
+        }
+    } releaseGuard { _swapchainReleaseInProgress, _swapchainReleaseOwnerThread };
+
+    const bool useConfiguredMutex = Config::Instance()->FGUseMutexForSwapchain.value_or_default();
+
+    if (useConfiguredMutex)
     {
         if (Mutex.getOwner() == 1)
         {
-            LOG_WARN("Skipping Mutex we are already in ReleaseSwapchain");
-            return true;
+            LOG_WARN("[XeFG][Lifecycle] action = release_swapchain_deferred, "
+                     "reason = release_already_in_progress");
+            return false;
         }
 
         LOG_TRACE("Waiting Mutex 1, current: {}", Mutex.getOwner());
@@ -1667,10 +1797,32 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
     if (_fgContext != nullptr)
         DestroyFGContext();
 
+    if (releaseFinalProxy)
+    {
+        State::Instance().currentFGSwapchain = nullptr;
+        releaseFinalProxy();
+        // The proxy object may now be destroyed. Do not access it after this point.
+    }
+
     if (!State::Instance().isShuttingDown)
     {
         if (_swapChainContext != nullptr)
-            DestroySwapchainContext();
+        {
+            if (!DestroySwapchainContext())
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = release_swapchain_aborted, reason = destroy_failed, "
+                          "context = {:X}, swapchain = {:X}",
+                          (size_t) _swapChainContext, (size_t) State::Instance().currentFGSwapchain);
+
+                if (useConfiguredMutex)
+                {
+                    LOG_TRACE("Releasing Mutex after failed destroy: {}", Mutex.getOwner());
+                    Mutex.unlockThis(1);
+                }
+
+                return false;
+            }
+        }
 
         _swapChainContext = nullptr;
         State::Instance().currentFGSwapchain = nullptr;
@@ -1678,7 +1830,7 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
 
     ReleaseObjects();
 
-    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
+    if (useConfiguredMutex)
     {
         LOG_TRACE("Releasing Mutex: {}", Mutex.getOwner());
         Mutex.unlockThis(1);

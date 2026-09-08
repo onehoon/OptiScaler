@@ -119,6 +119,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
     // Create FG swapchain
     auto fg = State::Instance().currentFG;
+    IUnknown* previousFGSwapchain = State::Instance().currentFGSwapchain;
     bool scResult = false;
 
     {
@@ -144,7 +145,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
         // Looks like game is creating new swapchain,
         // without releasing old one, be sure gpu is in idle state
-        if (State::Instance().currentFGSwapchain != nullptr)
+        if (previousFGSwapchain != nullptr)
         {
             LOG_WARN("Looks like game is creating new swapchain, without releasing old one!");
 
@@ -165,8 +166,10 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
                 }
             }
 
-            oldSwapChain = State::Instance().currentFGSwapchain;
         }
+
+        if (oldSwapChain == previousFGSwapchain)
+            oldSwapChain = nullptr;
 
         scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
 
@@ -176,6 +179,12 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
     if (scResult)
     {
+        IUnknown* newFGSwapchain = ppSwapChain != nullptr ? static_cast<IUnknown*>(*ppSwapChain) : nullptr;
+        if (previousFGSwapchain != nullptr && previousFGSwapchain != newFGSwapchain)
+            oldSwapChain = previousFGSwapchain;
+        else if (oldSwapChain == newFGSwapchain)
+            oldSwapChain = nullptr;
+
         if (State::Instance().currentD3D12Device != nullptr)
         {
             SAFE_RELEASE(resizeFence);
@@ -230,6 +239,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
 
     // Create FG swapchain
     auto fg = State::Instance().currentFG;
+    IUnknown* previousFGSwapchain = State::Instance().currentFGSwapchain;
     bool scResult = false;
 
     {
@@ -256,7 +266,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
 
         // Looks like game is creating new swapchain,
         // without releasing old one, be sure gpu is in idle state
-        if (State::Instance().currentFGSwapchain != nullptr)
+        if (previousFGSwapchain != nullptr)
         {
             LOG_WARN("Looks like game is creating new swapchain, without releasing old one!");
 
@@ -277,8 +287,10 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
                 }
             }
 
-            oldSwapChain = State::Instance().currentFGSwapchain;
         }
+
+        if (oldSwapChain == previousFGSwapchain)
+            oldSwapChain = nullptr;
 
         scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
 
@@ -288,6 +300,12 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
 
     if (scResult)
     {
+        IUnknown* newFGSwapchain = ppSwapChain != nullptr ? static_cast<IUnknown*>(*ppSwapChain) : nullptr;
+        if (previousFGSwapchain != nullptr && previousFGSwapchain != newFGSwapchain)
+            oldSwapChain = previousFGSwapchain;
+        else if (oldSwapChain == newFGSwapchain)
+            oldSwapChain = nullptr;
+
         if (State::Instance().currentD3D12Device != nullptr)
         {
             SAFE_RELEASE(resizeFence);
@@ -1271,16 +1289,28 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
         return 0;
     }
 
-    static bool skipReleaseChecks = false;
+    static thread_local bool skipReleaseChecks = false;
 
     if (skipReleaseChecks || State::Instance().currentFGSwapchain != This || State::Instance().isShuttingDown)
         return o_FGRelease(This);
+
+    if (State::Instance().activeFgOutput == FGOutput::XeFG && State::Instance().currentFG != nullptr)
+    {
+        auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG);
+        if (xefg != nullptr && xefg->SwapchainReleaseOwnedByCurrentThread())
+        {
+            LOG_TRACE("[XeFG][Lifecycle] action = fg_release_forwarded, "
+                      "reason = same_thread_lifecycle_reentry");
+            return o_FGRelease(This);
+        }
+    }
 
     This->AddRef();
 
     if (!Config::Instance()->FGPreserveSwapChain.value_or_default())
     {
-        if (o_FGRelease(This) == 1)
+        const auto releaseResult = o_FGRelease(This);
+        if (releaseResult == 1)
         {
             LOG_DEBUG("");
 
@@ -1303,11 +1333,29 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
 
             // To prevent deadlock when FG release the swapchain
             skipReleaseChecks = true;
+            bool releaseSucceeded = true;
 
             if (State::Instance().currentFG != nullptr)
             {
                 LOG_DEBUG("FG Swapchain released, release FG & swapchain context");
-                State::Instance().currentFG->ReleaseSwapchain(_hwnd);
+                if (auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG); xefg != nullptr)
+                {
+                    releaseSucceeded = xefg->ReleaseSwapchainFromFinalProxyRelease(
+                        _hwnd, [This]() {
+                            o_FGRelease(This);
+                        });
+                }
+                else
+                {
+                    releaseSucceeded = State::Instance().currentFG->ReleaseSwapchain(_hwnd);
+                }
+            }
+
+            if (!releaseSucceeded)
+            {
+                skipReleaseChecks = false;
+                LOG_ERROR("[XeFG][Lifecycle] action = fg_release_aborted, reason = release_swapchain_failed");
+                return 0;
             }
 
             LOG_DEBUG("FG Swapchain released, clearing currentFGSwapchain");
