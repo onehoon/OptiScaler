@@ -16,7 +16,28 @@
 #include <json.hpp>
 #include <sl1_reflex.h>
 #include <magic_enum.hpp>
+#include <mutex>
+#include <unordered_map>
+#include <unordered_set>
 #include "detours/detours.h"
+
+static bool shouldLogReflexGate()
+{
+    return static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
+}
+
+static void logReflexPluginFunctionRequest(const char* functionName)
+{
+    if (!shouldLogReflexGate() || functionName == nullptr)
+        return;
+
+    static std::mutex logMutex;
+    static std::unordered_set<std::string> loggedFunctions;
+
+    std::scoped_lock lock(logMutex);
+    if (loggedFunctions.emplace(functionName).second)
+        LOG_INFO("[ReflexGate] sl.reflex plugin function requested: {}", functionName);
+}
 
 static bool IsSL1AndDLSSGActive()
 {
@@ -107,6 +128,29 @@ sl::Result StreamlineHooks::hkslInit(const sl::Preferences& pref, uint64_t sdkVe
     LOG_FUNC();
 
     sl::Preferences localPref = pref;
+
+    if (shouldLogReflexGate())
+    {
+        bool hasReflex = false;
+        bool hasPcl = false;
+        bool hasDlss = false;
+        bool hasDlssg = false;
+
+        if (pref.featuresToLoad != nullptr)
+        {
+            for (uint32_t i = 0; i < pref.numFeaturesToLoad; ++i)
+            {
+                const auto feature = pref.featuresToLoad[i];
+                hasReflex |= feature == sl::kFeatureReflex;
+                hasPcl |= feature == sl::kFeaturePCL;
+                hasDlss |= feature == sl::kFeatureDLSS;
+                hasDlssg |= feature == sl::kFeatureDLSS_G;
+            }
+        }
+
+        LOG_INFO("[ReflexGate] slInit features count={} reflex={} pcl={} dlss={} dlssg={}", pref.numFeaturesToLoad,
+                 hasReflex, hasPcl, hasDlss, hasDlssg);
+    }
 
     if (localPref.logMessageCallback != &streamlineLogCallback)
         o_logCallback = localPref.logMessageCallback;
@@ -270,7 +314,31 @@ sl::Result StreamlineHooks::hkslIsFeatureSupported(sl::Feature feature, const sl
     if (feature == sl::kFeatureDLSS_G)
         return sl::Result::eOk;
 
-    return o_slIsFeatureSupported(feature, adapterInfo);
+    const auto result = o_slIsFeatureSupported(feature, adapterInfo);
+
+    if (feature == sl::kFeatureReflex && shouldLogReflexGate())
+    {
+        const bool luidPresent = adapterInfo.deviceLUID != nullptr;
+        static std::mutex logMutex;
+        static bool hasLogged = false;
+        static sl::Result lastResult = sl::Result::eOk;
+        static bool lastLuidPresent = false;
+        static uint32_t lastLuidSize = 0;
+
+        std::scoped_lock lock(logMutex);
+        if (!hasLogged || lastResult != result || lastLuidPresent != luidPresent ||
+            lastLuidSize != adapterInfo.deviceLUIDSizeInBytes)
+        {
+            LOG_INFO("[ReflexGate] slIsFeatureSupported Reflex result={} luidPresent={} luidSize={}",
+                     magic_enum::enum_name(result), luidPresent, adapterInfo.deviceLUIDSizeInBytes);
+            hasLogged = true;
+            lastResult = result;
+            lastLuidPresent = luidPresent;
+            lastLuidSize = adapterInfo.deviceLUIDSizeInBytes;
+        }
+    }
+
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslIsFeatureLoaded(sl::Feature feature, bool& loaded)
@@ -281,7 +349,27 @@ sl::Result StreamlineHooks::hkslIsFeatureLoaded(sl::Feature feature, bool& loade
         return sl::Result::eOk;
     }
 
-    return o_slIsFeatureLoaded(feature, loaded);
+    const auto result = o_slIsFeatureLoaded(feature, loaded);
+
+    if (feature == sl::kFeatureReflex && shouldLogReflexGate())
+    {
+        static std::mutex logMutex;
+        static bool hasLogged = false;
+        static sl::Result lastResult = sl::Result::eOk;
+        static bool lastLoaded = false;
+
+        std::scoped_lock lock(logMutex);
+        if (!hasLogged || lastResult != result || lastLoaded != loaded)
+        {
+            LOG_INFO("[ReflexGate] slIsFeatureLoaded Reflex result={} loaded={}", magic_enum::enum_name(result),
+                     loaded);
+            hasLogged = true;
+            lastResult = result;
+            lastLoaded = loaded;
+        }
+    }
+
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslGetFeatureRequirements(sl::Feature feature, sl::FeatureRequirements& requirements)
@@ -289,7 +377,24 @@ sl::Result StreamlineHooks::hkslGetFeatureRequirements(sl::Feature feature, sl::
     if (feature == sl::kFeatureDLSS_G)
         return sl::Result::eOk;
 
-    return o_slGetFeatureRequirements(feature, requirements);
+    const auto result = o_slGetFeatureRequirements(feature, requirements);
+
+    if (feature == sl::kFeatureReflex && shouldLogReflexGate())
+    {
+        static std::mutex logMutex;
+        static bool hasLogged = false;
+        static sl::Result lastResult = sl::Result::eOk;
+
+        std::scoped_lock lock(logMutex);
+        if (!hasLogged || lastResult != result)
+        {
+            LOG_INFO("[ReflexGate] slGetFeatureRequirements Reflex result={}", magic_enum::enum_name(result));
+            hasLogged = true;
+            lastResult = result;
+        }
+    }
+
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::FeatureVersion& version)
@@ -303,7 +408,44 @@ sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::Featu
         return sl::Result::eOk;
     }
 
-    return o_slGetFeatureVersion(feature, version);
+    const auto result = o_slGetFeatureVersion(feature, version);
+
+    if (feature == sl::kFeatureReflex && shouldLogReflexGate())
+    {
+        static std::mutex logMutex;
+        static bool hasLogged = false;
+        static sl::Result lastResult = sl::Result::eOk;
+        static sl::Version lastSlVersion;
+        static sl::Version lastNgxVersion;
+
+        const bool hasVersion = result == sl::Result::eOk;
+        const auto currentSlVersion = hasVersion ? version.versionSL : sl::Version {};
+        const auto currentNgxVersion = hasVersion ? version.versionNGX : sl::Version {};
+
+        std::scoped_lock lock(logMutex);
+        if (!hasLogged || lastResult != result || !(lastSlVersion == currentSlVersion) ||
+            !(lastNgxVersion == currentNgxVersion))
+        {
+            if (hasVersion)
+            {
+                LOG_INFO("[ReflexGate] slGetFeatureVersion Reflex result={} sl={}.{}.{} ngx={}.{}.{}",
+                         magic_enum::enum_name(result), currentSlVersion.major, currentSlVersion.minor,
+                         currentSlVersion.build, currentNgxVersion.major, currentNgxVersion.minor,
+                         currentNgxVersion.build);
+            }
+            else
+            {
+                LOG_INFO("[ReflexGate] slGetFeatureVersion Reflex result={}", magic_enum::enum_name(result));
+            }
+
+            hasLogged = true;
+            lastResult = result;
+            lastSlVersion = currentSlVersion;
+            lastNgxVersion = currentNgxVersion;
+        }
+    }
+
+    return result;
 }
 
 static sl::Result dummy_slDLSSGGetState(const sl::ViewportHandle& viewport, sl::DLSSGState& state,
@@ -341,7 +483,31 @@ sl::Result StreamlineHooks::hkslGetFeatureFunction(sl::Feature feature, const ch
         }
     }
 
-    return o_slGetFeatureFunction(feature, functionName, function);
+    const auto result = o_slGetFeatureFunction(feature, functionName, function);
+
+    if (feature == sl::kFeatureReflex && shouldLogReflexGate() && functionName != nullptr)
+    {
+        static std::mutex logMutex;
+        static std::unordered_map<std::string, std::pair<sl::Result, bool>> loggedFunctions;
+
+        std::scoped_lock lock(logMutex);
+        const auto state = std::make_pair(result, function != nullptr);
+        const auto [it, inserted] = loggedFunctions.emplace(functionName, state);
+        bool changed = inserted;
+        if (!inserted && it->second != state)
+        {
+            it->second = state;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            LOG_INFO("[ReflexGate] slGetFeatureFunction Reflex name={} result={} ptr={}", functionName,
+                     magic_enum::enum_name(result), function != nullptr);
+        }
+    }
+
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const sl::ResourceTag* tags,
@@ -1357,7 +1523,8 @@ sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
 {
     const auto result = o_slReflexGetState(state);
     const bool originalLowLatencyAvailable = state.lowLatencyAvailable;
-    const bool quirkEnabled = static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
+    const bool quirkEnabled =
+        static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
     const bool streamlineSpoofing = Config::Instance()->StreamlineSpoofing.value_or_default();
     const bool fakeNvapiIsMain = fakenvapi::isUsingAsMainNvapi();
 
@@ -1528,6 +1695,8 @@ bool StreamlineHooks::hkreflex_slSetConstants_sl1(const void* data, uint32_t fra
 void* StreamlineHooks::hkreflex_slGetPluginFunction(const char* functionName)
 {
     // LOG_DEBUG("{}", functionName);
+
+    logReflexPluginFunctionRequest(functionName);
 
     if (strcmp(functionName, "slSetConstants") == 0 && State::Instance().streamlineVersion.major == 1)
     {
