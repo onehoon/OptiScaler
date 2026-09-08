@@ -119,6 +119,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
     // Create FG swapchain
     auto fg = State::Instance().currentFG;
+    IUnknown* previousFGSwapchain = State::Instance().currentFGSwapchain;
     bool scResult = false;
 
     {
@@ -144,7 +145,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
         // Looks like game is creating new swapchain,
         // without releasing old one, be sure gpu is in idle state
-        if (State::Instance().currentFGSwapchain != nullptr)
+        if (previousFGSwapchain != nullptr)
         {
             LOG_WARN("Looks like game is creating new swapchain, without releasing old one!");
 
@@ -165,8 +166,10 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
                 }
             }
 
-            oldSwapChain = State::Instance().currentFGSwapchain;
         }
+
+        if (oldSwapChain == previousFGSwapchain)
+            oldSwapChain = nullptr;
 
         scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
 
@@ -176,6 +179,12 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
     if (scResult)
     {
+        IUnknown* newFGSwapchain = ppSwapChain != nullptr ? static_cast<IUnknown*>(*ppSwapChain) : nullptr;
+        if (previousFGSwapchain != nullptr && previousFGSwapchain != newFGSwapchain)
+            oldSwapChain = previousFGSwapchain;
+        else if (oldSwapChain == newFGSwapchain)
+            oldSwapChain = nullptr;
+
         if (State::Instance().currentD3D12Device != nullptr)
         {
             SAFE_RELEASE(resizeFence);
@@ -230,6 +239,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
 
     // Create FG swapchain
     auto fg = State::Instance().currentFG;
+    IUnknown* previousFGSwapchain = State::Instance().currentFGSwapchain;
     bool scResult = false;
 
     {
@@ -256,7 +266,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
 
         // Looks like game is creating new swapchain,
         // without releasing old one, be sure gpu is in idle state
-        if (State::Instance().currentFGSwapchain != nullptr)
+        if (previousFGSwapchain != nullptr)
         {
             LOG_WARN("Looks like game is creating new swapchain, without releasing old one!");
 
@@ -277,8 +287,10 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
                 }
             }
 
-            oldSwapChain = State::Instance().currentFGSwapchain;
         }
+
+        if (oldSwapChain == previousFGSwapchain)
+            oldSwapChain = nullptr;
 
         scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
 
@@ -288,6 +300,12 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
 
     if (scResult)
     {
+        IUnknown* newFGSwapchain = ppSwapChain != nullptr ? static_cast<IUnknown*>(*ppSwapChain) : nullptr;
+        if (previousFGSwapchain != nullptr && previousFGSwapchain != newFGSwapchain)
+            oldSwapChain = previousFGSwapchain;
+        else if (oldSwapChain == newFGSwapchain)
+            oldSwapChain = nullptr;
+
         if (State::Instance().currentD3D12Device != nullptr)
         {
             SAFE_RELEASE(resizeFence);
