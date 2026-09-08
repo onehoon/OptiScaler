@@ -1316,18 +1316,36 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
             // To prevent deadlock when FG release the swapchain
             skipReleaseChecks = true;
             bool releaseSucceeded = true;
+            bool finalProxyReleased = false;
 
             if (State::Instance().currentFG != nullptr)
             {
                 LOG_DEBUG("FG Swapchain released, release FG & swapchain context");
-                releaseSucceeded = State::Instance().currentFG->ReleaseSwapchain(_hwnd);
+                if (auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG); xefg != nullptr)
+                {
+                    releaseSucceeded = xefg->ReleaseSwapchainFromFinalProxyRelease(
+                        _hwnd, [This, &finalProxyReleased]() {
+                            o_FGRelease(This);
+                            finalProxyReleased = true;
+                        });
+
+                    if (!finalProxyReleased)
+                    {
+                        o_FGRelease(This);
+                        finalProxyReleased = true;
+                    }
+                }
+                else
+                {
+                    releaseSucceeded = State::Instance().currentFG->ReleaseSwapchain(_hwnd);
+                }
             }
 
             if (!releaseSucceeded)
             {
                 skipReleaseChecks = false;
                 LOG_ERROR("[XeFG][Lifecycle] action = fg_release_aborted, reason = release_swapchain_failed");
-                return releaseResult;
+                return finalProxyReleased ? 0 : releaseResult;
             }
 
             LOG_DEBUG("FG Swapchain released, clearing currentFGSwapchain");

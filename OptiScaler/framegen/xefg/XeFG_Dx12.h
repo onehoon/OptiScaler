@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 
 #include <framegen/IFGFeature_Dx12.h>
@@ -23,6 +24,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     xefg_swapchain_handle_t _fgContext = nullptr;
     std::atomic_bool _swapchainReleaseInProgress { false };
     std::mutex _swapchainLifecycleMutex;
+    bool _swapchainRecreationBlocked = false;
 
     uint32_t _width = 0;
     uint32_t _height = 0;
@@ -36,7 +38,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
 
     bool CreateSwapchainContext(ID3D12Device* device);
     bool DestroySwapchainContext();
-    bool ReleaseSwapchainLocked(HWND hwnd);
+    bool ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy = {});
     xefg_swapchain_d3d12_resource_data_t GetResourceData(FG_ResourceType type, int index = -1);
 
     bool Dispatch();
@@ -59,6 +61,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
                           bool readyToRelease) override final;
 
     bool ReleaseSwapchain(HWND hwnd) override final;
+    bool ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy);
 
     void CreateContext(ID3D12Device* device, FG_Constants& fgConstants) override final;
     void Activate() override final;

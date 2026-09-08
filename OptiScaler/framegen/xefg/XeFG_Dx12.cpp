@@ -182,10 +182,12 @@ bool XeFG_Dx12::DestroySwapchainContext()
     if (static_cast<int32_t>(result) < 0)
     {
         _swapChainContext = context;
+        _swapchainRecreationBlocked = true;
         LOG_ERROR("[XeFG][Lifecycle] action = destroy_failed, context = {:X}, retained = true", (size_t) context);
         return false;
     }
 
+    _swapchainRecreationBlocked = false;
     State::Instance().currentFGSwapchain = nullptr;
     return true;
 }
@@ -250,6 +252,13 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     {
         LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
                  "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
+    if (_swapchainRecreationBlocked)
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
+                 "reason = previous_destroy_failed");
         return false;
     }
 
@@ -469,6 +478,13 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     {
         LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
                  "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
+    if (_swapchainRecreationBlocked)
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
+                 "reason = previous_destroy_failed");
         return false;
     }
 
@@ -1682,7 +1698,20 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
     return ReleaseSwapchainLocked(hwnd);
 }
 
-bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd)
+bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy)
+{
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex, std::try_to_lock);
+    if (!lifecycleLock.owns_lock())
+    {
+        LOG_WARN("[XeFG][Lifecycle] action = release_swapchain_deferred, "
+                 "reason = lifecycle_transaction_in_progress");
+        return false;
+    }
+
+    return ReleaseSwapchainLocked(hwnd, std::move(releaseFinalProxy));
+}
+
+bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy)
 {
     if (hwnd != _hwnd || _hwnd == NULL)
         return false;
@@ -1722,6 +1751,13 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd)
 
     if (_fgContext != nullptr)
         DestroyFGContext();
+
+    if (releaseFinalProxy)
+    {
+        releaseFinalProxy();
+        // The proxy object may now be destroyed. Do not access it after this point.
+        State::Instance().currentFGSwapchain = nullptr;
+    }
 
     if (!State::Instance().isShuttingDown)
     {
