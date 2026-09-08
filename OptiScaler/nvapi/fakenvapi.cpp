@@ -1,7 +1,11 @@
 #include "pch.h"
 
 #include "proxies/FfxApi_Proxy.h"
+#include "State.h"
+#include "Util.h"
 #include <unordered_map>
+#include <unordered_set>
+#include <mutex>
 
 #include "fakenvapi.h"
 #include "NvApiTypes.h"
@@ -10,6 +14,83 @@
 #define nvapi_interface_table nvapi_interface_table_extern
 #include <nvapi_interface.h>
 #undef nvapi_interface_table
+
+#pragma intrinsic(_ReturnAddress)
+
+namespace ReflexNvapiGateDiag
+{
+namespace
+{
+bool enabled()
+{
+    const auto& state = State::Instance();
+    if (static_cast<bool>(state.gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel))
+        return true;
+
+    return _stricmp(state.gameExe.c_str(), "dd2.exe") == 0 || _stricmp(state.gameExe.c_str(), "dd2ccs.exe") == 0;
+}
+
+std::string callerName(void* callerAddress)
+{
+    auto name = Util::WhoIsTheCaller(callerAddress);
+    return name.empty() ? "unknown" : name;
+}
+} // namespace
+
+void logQuery(NvU32 id, const char* name, const char* resolution, void* function, bool cacheHit, void* callerAddress)
+{
+    if (!enabled())
+        return;
+
+    static std::mutex logMutex;
+    static std::unordered_set<std::string> loggedQueries;
+    static std::unordered_map<NvU32, std::string> knownNames;
+
+    const auto caller = callerName(callerAddress);
+
+    std::scoped_lock lock(logMutex);
+    if (name != nullptr && name[0] != '\0')
+        knownNames[id] = name;
+
+    const auto nameEntry = knownNames.find(id);
+    const auto loggedName = nameEntry != knownNames.end() ? nameEntry->second : "unknown";
+    const auto key = std::format("{}|{:08X}|{}", caller, id, resolution);
+
+    if (loggedQueries.emplace(key).second)
+    {
+        LOG_INFO("[ReflexNvapiGate] QueryInterface caller={} id=0x{:08X} name={} resolution={} cache={} ptr=0x{:X}",
+                 caller, id, loggedName, resolution, cacheHit ? "hit" : "miss", reinterpret_cast<uintptr_t>(function));
+    }
+}
+
+void logCall(const char* functionName, NvAPI_Status status, void* callerAddress)
+{
+    if (!enabled() || functionName == nullptr)
+        return;
+
+    static std::mutex logMutex;
+    static std::unordered_set<std::string> loggedCalls;
+
+    const auto caller = callerName(callerAddress);
+    const auto key = std::format("{}|{}", caller, functionName);
+
+    std::scoped_lock lock(logMutex);
+    if (loggedCalls.emplace(key).second)
+    {
+        LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X}", caller, functionName,
+                 static_cast<uint32_t>(status));
+    }
+}
+} // namespace ReflexNvapiGateDiag
+
+#undef INSERT_AND_RETURN_WHEN_EQUALS
+#define INSERT_AND_RETURN_WHEN_EQUALS(method)                                                                          \
+    if (std::string(it->func) == #method)                                                                              \
+    {                                                                                                                  \
+        const auto function = idToFuncMapping.insert({ id, (void*) nvapi_calls::method }).first->second;               \
+        ReflexNvapiGateDiag::logQuery(id, it->func, "implemented", function, false, callerAddress);                    \
+        return function;                                                                                               \
+    }
 
 std::unordered_map<NvU32, void*> fakenvapi::idToFuncMapping;
 
@@ -37,13 +118,24 @@ static NVAPI_INTERFACE_TABLE additional_interface_table[] = { { "NvAPI_Diag_Repo
                                                               { "NvAPI_SK_4", 0xdf0dfcdd },
                                                               { "NvAPI_SK_5", 0x932ac8fb } };
 
-extern "C" __declspec(dllexport) void* nvapi_QueryInterface(NvU32 id) { return fakenvapi::queryInterface(id); }
+extern "C" __declspec(dllexport) void* nvapi_QueryInterface(NvU32 id)
+{
+    return fakenvapi::queryInterfaceWithCaller(id, _ReturnAddress());
+}
 
-void* __cdecl fakenvapi::queryInterface(NvU32 id)
+void* __cdecl fakenvapi::queryInterface(NvU32 id) { return queryInterfaceWithCaller(id, _ReturnAddress()); }
+
+void* __cdecl fakenvapi::queryInterfaceWithCaller(NvU32 id, void* callerAddress)
 {
     auto entry = idToFuncMapping.find(id);
     if (entry != idToFuncMapping.end())
+    {
+        const auto resolution = entry->second == nullptr               ? "unknown-null"
+                                : entry->second == (void*) placeholder ? "placeholder"
+                                                                       : "implemented";
+        ReflexNvapiGateDiag::logQuery(id, nullptr, resolution, entry->second, true, callerAddress);
         return entry->second;
+    }
 
     constexpr auto original_size = sizeof(nvapi_interface_table_extern) / sizeof(nvapi_interface_table_extern[0]);
     constexpr auto additional_size = sizeof(additional_interface_table) / sizeof(additional_interface_table[0]);
@@ -65,7 +157,9 @@ void* __cdecl fakenvapi::queryInterface(NvU32 id)
     if (it == std::end(extended_interface_table))
     {
         LOG_DEBUG("NvAPI_QueryInterface (0x{:x}): Unknown interface ID", id);
-        return idToFuncMapping.insert({ id, nullptr }).first->second;
+        const auto function = idToFuncMapping.insert({ id, nullptr }).first->second;
+        ReflexNvapiGateDiag::logQuery(id, "unknown", "unknown-null", function, false, callerAddress);
+        return function;
     }
 
     INSERT_AND_RETURN_WHEN_EQUALS(NvAPI_Initialize)
@@ -145,7 +239,9 @@ void* __cdecl fakenvapi::queryInterface(NvU32 id)
     INSERT_AND_RETURN_WHEN_EQUALS(NvAPI_Unload)
 
     LOG_DEBUG("{}: not implemented, placeholder given", it->func);
-    return idToFuncMapping.insert({ id, (void*) placeholder }).first->second;
+    const auto function = idToFuncMapping.insert({ id, (void*) placeholder }).first->second;
+    ReflexNvapiGateDiag::logQuery(id, it->func, "placeholder", function, false, callerAddress);
+    return function;
     // return registry.insert({ id, nullptr }).first->second;
 }
 

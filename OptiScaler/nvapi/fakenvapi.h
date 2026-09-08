@@ -5,6 +5,12 @@
 #include <unordered_map>
 #include "low_latency/ll_util.h"
 
+namespace ReflexNvapiGateDiag
+{
+void logQuery(NvU32 id, const char* name, const char* resolution, void* function, bool cacheHit, void* callerAddress);
+void logCall(const char* functionName, NvAPI_Status status, void* callerAddress);
+} // namespace ReflexNvapiGateDiag
+
 class fakenvapi
 {
     inline static struct AntiLag2Data
@@ -38,6 +44,7 @@ class fakenvapi
     static void init(bool onlyContext);
     static void deinit();
     static void* queryInterface(NvU32 id);
+    static void* queryInterfaceWithCaller(NvU32 id, void* callerAddress);
     static void reportFGPresent(IDXGISwapChain* pSwapChain, bool fg_state, bool frame_interpolated);
     static bool forceMode(IUnknown* device, LowLatencyMode mode);
     static bool isLowLatencyActive();

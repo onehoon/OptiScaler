@@ -12,6 +12,8 @@
 #include <math.h>
 #include <imgui/ImGuiNotify.hpp>
 
+#pragma intrinsic(_ReturnAddress)
+
 static inline uint64_t _lastFrameId[20] = { 0 };
 static inline IUnknown* _lastDev[20] = { 0 };
 
@@ -19,8 +21,15 @@ static inline IUnknown* _lastDev[20] = { 0 };
 
 std::optional<TimingEntry> ReflexHooks::timingData[TimingType::TimingTypeCOUNT] {};
 
+static NvAPI_Status logReflexNvapiCall(const char* functionName, NvAPI_Status status, void* callerAddress)
+{
+    ReflexNvapiGateDiag::logCall(functionName, status, callerAddress);
+    return status;
+}
+
 NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetSleepMode(IUnknown* pDev, NV_SET_SLEEP_MODE_PARAMS* pSetSleepModeParams)
 {
+    const auto callerAddress = _ReturnAddress();
 #ifdef LOG_REFLEX_CALLS
     LOG_FUNC();
 #endif
@@ -35,13 +44,16 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetSleepMode(IUnknown* pDev, NV_SET_SLEEP_
         pSetSleepModeParams->minimumIntervalUs = _minimumIntervalUs;
 
     if (State::Instance().activeFgOutput == FGOutput::XeFG)
-        return nvapi_calls::NvAPI_D3D_SetSleepMode(pDev, pSetSleepModeParams);
+        return logReflexNvapiCall("NvAPI_D3D_SetSleepMode",
+                                  nvapi_calls::NvAPI_D3D_SetSleepMode(pDev, pSetSleepModeParams), callerAddress);
 
-    return o_NvAPI_D3D_SetSleepMode(pDev, pSetSleepModeParams);
+    return logReflexNvapiCall("NvAPI_D3D_SetSleepMode", o_NvAPI_D3D_SetSleepMode(pDev, pSetSleepModeParams),
+                              callerAddress);
 }
 
 NvAPI_Status ReflexHooks::hkNvAPI_D3D_Sleep(IUnknown* pDev)
 {
+    const auto callerAddress = _ReturnAddress();
 #ifdef LOG_REFLEX_CALLS
     LOG_FUNC();
 #endif
@@ -64,37 +76,40 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D_Sleep(IUnknown* pDev)
             StreamlineProxy::ReflexSleep()(*frameToken);
             skip = false;
 
-            return NVAPI_OK;
+            return logReflexNvapiCall("NvAPI_D3D_Sleep", NVAPI_OK, callerAddress);
         }
         else
         {
             _lastSleepDev = pDev;
-            return o_NvAPI_D3D_Sleep(pDev);
+            return logReflexNvapiCall("NvAPI_D3D_Sleep", o_NvAPI_D3D_Sleep(pDev), callerAddress);
         }
     }
 
     if (State::Instance().activeFgOutput == FGOutput::XeFG)
-        return nvapi_calls::NvAPI_D3D_Sleep(pDev);
+        return logReflexNvapiCall("NvAPI_D3D_Sleep", nvapi_calls::NvAPI_D3D_Sleep(pDev), callerAddress);
 
     _lastSleepDev = pDev;
-    return o_NvAPI_D3D_Sleep(pDev);
+    return logReflexNvapiCall("NvAPI_D3D_Sleep", o_NvAPI_D3D_Sleep(pDev), callerAddress);
 }
 
 NvAPI_Status ReflexHooks::hkNvAPI_D3D_GetLatency(IUnknown* pDev, NV_LATENCY_RESULT_PARAMS* pGetLatencyParams)
 {
+    const auto callerAddress = _ReturnAddress();
 #ifdef LOG_REFLEX_CALLS
     LOG_FUNC();
 #endif
 
     if (State::Instance().activeFgOutput == FGOutput::XeFG)
-        return nvapi_calls::NvAPI_D3D_GetLatency(pDev, pGetLatencyParams);
+        return logReflexNvapiCall("NvAPI_D3D_GetLatency", nvapi_calls::NvAPI_D3D_GetLatency(pDev, pGetLatencyParams),
+                                  callerAddress);
 
-    return o_NvAPI_D3D_GetLatency(pDev, pGetLatencyParams);
+    return logReflexNvapiCall("NvAPI_D3D_GetLatency", o_NvAPI_D3D_GetLatency(pDev, pGetLatencyParams), callerAddress);
 }
 
 NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetLatencyMarker(IUnknown* pDev,
                                                        NV_LATENCY_MARKER_PARAMS* pSetLatencyMarkerParams)
 {
+    const auto callerAddress = _ReturnAddress();
 #ifdef LOG_REFLEX_CALLS
     LOG_FUNC();
 #endif
@@ -228,14 +243,15 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetLatencyMarker(IUnknown* pDev,
             StreamlineProxy::PCLSetMarker()(marker, *frameToken);
             skip[index] = false;
 
-            return NvAPI_Status::NVAPI_OK;
+            return logReflexNvapiCall("NvAPI_D3D_SetLatencyMarker", NvAPI_Status::NVAPI_OK, callerAddress);
         }
         else
         {
             if (noMarker)
-                return NVAPI_OK;
+                return logReflexNvapiCall("NvAPI_D3D_SetLatencyMarker", NVAPI_OK, callerAddress);
             else
-                return o_NvAPI_D3D_SetLatencyMarker(pDev, pSetLatencyMarkerParams);
+                return logReflexNvapiCall("NvAPI_D3D_SetLatencyMarker",
+                                          o_NvAPI_D3D_SetLatencyMarker(pDev, pSetLatencyMarkerParams), callerAddress);
         }
     }
 
@@ -246,7 +262,7 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetLatencyMarker(IUnknown* pDev,
             _lastSetSleepThread != std::this_thread::get_id())
         {
             LOG_TRACE("Skipping marker for a hack");
-            return NVAPI_OK;
+            return logReflexNvapiCall("NvAPI_D3D_SetLatencyMarker", NVAPI_OK, callerAddress);
         }
 
         if (pSetLatencyMarkerParams->markerType == SIMULATION_END)
@@ -266,14 +282,18 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetLatencyMarker(IUnknown* pDev,
     }
 
     if (State::Instance().activeFgOutput == FGOutput::XeFG)
-        return nvapi_calls::NvAPI_D3D_SetLatencyMarker(pDev, pSetLatencyMarkerParams);
+        return logReflexNvapiCall("NvAPI_D3D_SetLatencyMarker",
+                                  nvapi_calls::NvAPI_D3D_SetLatencyMarker(pDev, pSetLatencyMarkerParams),
+                                  callerAddress);
 
-    return o_NvAPI_D3D_SetLatencyMarker(pDev, pSetLatencyMarkerParams);
+    return logReflexNvapiCall("NvAPI_D3D_SetLatencyMarker", o_NvAPI_D3D_SetLatencyMarker(pDev, pSetLatencyMarkerParams),
+                              callerAddress);
 }
 
 NvAPI_Status ReflexHooks::hkNvAPI_D3D12_SetAsyncFrameMarker(ID3D12CommandQueue* pCommandQueue,
                                                             NV_ASYNC_FRAME_MARKER_PARAMS* pSetAsyncFrameMarkerParams)
 {
+    const auto callerAddress = _ReturnAddress();
 #ifdef LOG_REFLEX_CALLS
     LOG_FUNC();
 #endif
@@ -353,9 +373,13 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D12_SetAsyncFrameMarker(ID3D12CommandQueue* 
     //}
 
     if (State::Instance().activeFgOutput == FGOutput::XeFG)
-        return nvapi_calls::NvAPI_D3D12_SetAsyncFrameMarker(pCommandQueue, pSetAsyncFrameMarkerParams);
+        return logReflexNvapiCall(
+            "NvAPI_D3D12_SetAsyncFrameMarker",
+            nvapi_calls::NvAPI_D3D12_SetAsyncFrameMarker(pCommandQueue, pSetAsyncFrameMarkerParams), callerAddress);
 
-    return o_NvAPI_D3D12_SetAsyncFrameMarker(pCommandQueue, pSetAsyncFrameMarkerParams);
+    return logReflexNvapiCall("NvAPI_D3D12_SetAsyncFrameMarker",
+                              o_NvAPI_D3D12_SetAsyncFrameMarker(pCommandQueue, pSetAsyncFrameMarkerParams),
+                              callerAddress);
 }
 
 NvAPI_Status ReflexHooks::hkNvAPI_Vulkan_SetLatencyMarker(HANDLE vkDevice,

@@ -11,6 +11,8 @@
 #include <misc/IdentifyGpu.h>
 #include <low_latency/input/input_reflex.h>
 
+#pragma intrinsic(_ReturnAddress)
+
 // #define LOG_ALL_DRS_GET_CALLS
 
 #ifdef LOG_ALL_DRS_GET_CALLS
@@ -20,9 +22,11 @@
 NvAPI_Status __stdcall NvApiHooks::hkNvAPI_GPU_GetArchInfo(NvPhysicalGpuHandle hPhysicalGpu,
                                                            NV_GPU_ARCH_INFO* pGpuArchInfo)
 {
+    const auto callerAddress = _ReturnAddress();
     if (!o_NvAPI_GPU_GetArchInfo)
     {
         LOG_DEBUG("nullptr");
+        ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetArchInfo", NVAPI_ERROR, callerAddress);
         return NVAPI_ERROR;
     }
 
@@ -54,6 +58,7 @@ NvAPI_Status __stdcall NvApiHooks::hkNvAPI_GPU_GetArchInfo(NvPhysicalGpuHandle h
         }
     }
 
+    ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetArchInfo", status, callerAddress);
     return status;
 }
 
@@ -189,6 +194,7 @@ NvAPI_Status __stdcall NvApiHooks::hkNvAPI_DRS_GetSetting(NvDRSSessionHandle hSe
 
 void* __stdcall NvApiHooks::hkNvAPI_QueryInterface(unsigned int InterfaceId)
 {
+    const auto callerAddress = _ReturnAddress();
     if (!o_NvAPI_QueryInterface)
         if (Config::Instance()->UseFakenvapi.value_or_default())
             o_NvAPI_QueryInterface = (PFN_NvApi_QueryInterface) fakenvapi::queryInterface;
@@ -216,17 +222,41 @@ void* __stdcall NvApiHooks::hkNvAPI_QueryInterface(unsigned int InterfaceId)
     {
 #ifdef LOW_LATENCY_INPUTS
         if (InterfaceId == GET_ID(NvAPI_D3D_SetSleepMode))
+        {
+            ReflexNvapiGateDiag::logQuery(InterfaceId, "NvAPI_D3D_SetSleepMode", "implemented",
+                                          InputReflex::D3D_SetSleepMode, false, callerAddress);
             return InputReflex::D3D_SetSleepMode;
+        }
         if (InterfaceId == GET_ID(NvAPI_D3D_GetSleepStatus))
+        {
+            ReflexNvapiGateDiag::logQuery(InterfaceId, "NvAPI_D3D_GetSleepStatus", "implemented",
+                                          InputReflex::D3D_GetSleepStatus, false, callerAddress);
             return InputReflex::D3D_GetSleepStatus;
+        }
         else if (InterfaceId == GET_ID(NvAPI_D3D_Sleep))
+        {
+            ReflexNvapiGateDiag::logQuery(InterfaceId, "NvAPI_D3D_Sleep", "implemented", InputReflex::D3D_Sleep, false,
+                                          callerAddress);
             return InputReflex::D3D_Sleep;
+        }
         else if (InterfaceId == GET_ID(NvAPI_D3D_GetLatency))
+        {
+            ReflexNvapiGateDiag::logQuery(InterfaceId, "NvAPI_D3D_GetLatency", "implemented",
+                                          InputReflex::D3D_GetLatency, false, callerAddress);
             return InputReflex::D3D_GetLatency;
+        }
         else if (InterfaceId == GET_ID(NvAPI_D3D_SetLatencyMarker))
+        {
+            ReflexNvapiGateDiag::logQuery(InterfaceId, "NvAPI_D3D_SetLatencyMarker", "implemented",
+                                          InputReflex::D3D_SetLatencyMarker, false, callerAddress);
             return InputReflex::D3D_SetLatencyMarker;
+        }
         else if (InterfaceId == GET_ID(NvAPI_D3D12_SetAsyncFrameMarker))
+        {
+            ReflexNvapiGateDiag::logQuery(InterfaceId, "NvAPI_D3D12_SetAsyncFrameMarker", "implemented",
+                                          InputReflex::D3D12_SetAsyncFrameMarker, false, callerAddress);
             return InputReflex::D3D12_SetAsyncFrameMarker;
+        }
 #endif
 
         // LOG_DEBUG("counter: {}, hookReflex()", qiCounter);
@@ -236,7 +266,9 @@ void* __stdcall NvApiHooks::hkNvAPI_QueryInterface(unsigned int InterfaceId)
 
     ReflexHooks::hookReflex(o_NvAPI_QueryInterface);
 
-    const auto functionPointer = o_NvAPI_QueryInterface(InterfaceId);
+    const auto functionPointer = fakenvapi::isUsingAsMainNvapi()
+                                     ? fakenvapi::queryInterfaceWithCaller(InterfaceId, callerAddress)
+                                     : o_NvAPI_QueryInterface(InterfaceId);
 
     if (functionPointer)
     {

@@ -7,6 +7,8 @@
 #include <NvApiDriverSettings.h>
 #include <hooks/Vulkan_Hooks.h>
 
+#pragma intrinsic(_ReturnAddress)
+
 using Microsoft::WRL::ComPtr;
 
 LowLatency* LowLatencyCtx::lowlatency_ctx = nullptr;
@@ -70,11 +72,14 @@ static bool shouldFixSlReflexAvailabilityOnIntel(IUnknown* pDevice)
 
 NvAPI_Status __cdecl NvAPI_Initialize()
 {
+    const auto callerAddress = _ReturnAddress();
     std::scoped_lock lock(init_mutex);
 
     ref_count++;
 
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_Initialize", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GetInterfaceVersionString(NvAPI_ShortString desc)
@@ -85,16 +90,22 @@ NvAPI_Status __cdecl NvAPI_GetInterfaceVersionString(NvAPI_ShortString desc)
 
 NvAPI_Status __cdecl NvAPI_EnumPhysicalGPUs(NvPhysicalGpuHandle handles[NVAPI_MAX_PHYSICAL_GPUS], NvU32* count)
 {
+    const auto callerAddress = _ReturnAddress();
     handles[0] = nullptr;
     *count = 1;
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_EnumPhysicalGPUs", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_EnumLogicalGPUs(NvLogicalGpuHandle handles[NVAPI_MAX_LOGICAL_GPUS], NvU32* count)
 {
+    const auto callerAddress = _ReturnAddress();
     handles[0] = nullptr;
     *count = 1;
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_EnumLogicalGPUs", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_EnumNvidiaDisplayHandle(NvU32 displayId, NvDisplayHandle* handle)
@@ -109,20 +120,29 @@ NvAPI_Status __cdecl NvAPI_EnumNvidiaDisplayHandle(NvU32 displayId, NvDisplayHan
 NvAPI_Status __cdecl NvAPI_GetLogicalGPUFromPhysicalGPU(NvPhysicalGpuHandle physicalHandle,
                                                         NvLogicalGpuHandle* logicalHandle)
 {
+    const auto callerAddress = _ReturnAddress();
     *logicalHandle = nullptr;
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_GetLogicalGPUFromPhysicalGPU", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GetGPUIDfromPhysicalGPU(NvPhysicalGpuHandle hPhysicalGpu, NvU32* pGpuId)
 {
+    const auto callerAddress = _ReturnAddress();
     *pGpuId = 42;
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_GetGPUIDfromPhysicalGPU", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GetPhysicalGPUFromGPUID(NvU32 gpuId, NvPhysicalGpuHandle* pPhysicalGPU)
 {
+    const auto callerAddress = _ReturnAddress();
     *pPhysicalGPU = nullptr;
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_GetPhysicalGPUFromGPUID", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GetPhysicalGPUsFromDisplay(NvDisplayHandle hNvDisp,
@@ -155,13 +175,20 @@ NvAPI_Status __cdecl NvAPI_GetErrorMessage(NvAPI_Status status, NvAPI_ShortStrin
 
 NvAPI_Status __cdecl NvAPI_GetDisplayDriverVersion(NvDisplayHandle hNvDisplay, NV_DISPLAY_DRIVER_VERSION* pVersion)
 {
+    const auto callerAddress = _ReturnAddress();
     if (!pVersion)
-        return ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+    {
+        const auto status = ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+        ReflexNvapiGateDiag::logCall("NvAPI_GetDisplayDriverVersion", status, callerAddress);
+        return status;
+    }
 
     pVersion->drvVersion = 99999;
     tonvss(pVersion->szBuildBranchString, "buildBranch");
     tonvss(pVersion->szAdapterString, "NVIDIA GeForce RTX 4090");
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_GetDisplayDriverVersion", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GPU_CudaEnumComputeCapableGpus(NV_COMPUTE_GPU_TOPOLOGY* pComputeTopo)
@@ -197,30 +224,39 @@ NvAPI_Status __cdecl NvAPI_GPU_GetArchInfo(NvPhysicalGpuHandle handle, NV_GPU_AR
 
 NvAPI_Status __cdecl NvAPI_GPU_GetLogicalGpuInfo(NvLogicalGpuHandle logicalHandle, NV_LOGICAL_GPU_DATA* logicalGpuData)
 {
+    const auto callerAddress = _ReturnAddress();
     auto primaryGpu = IdentifyGpu::getPrimaryGpu();
 
     memcpy(logicalGpuData->pOSAdapterId, &primaryGpu.luid, sizeof(primaryGpu.luid));
     logicalGpuData->physicalGpuHandles[0] = nullptr;
     logicalGpuData->physicalGpuCount = 1;
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetLogicalGpuInfo", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GPU_GetPCIIdentifiers(NvPhysicalGpuHandle hPhysicalGpu, NvU32* pDeviceId,
                                                  NvU32* pSubSystemId, NvU32* pRevisionId, NvU32* pExtDeviceId)
 {
+    const auto callerAddress = _ReturnAddress();
     auto primaryGpu = IdentifyGpu::getPrimaryGpu();
 
     *pDeviceId = (primaryGpu.deviceId << 16) | primaryGpu.vendorId;
     *pSubSystemId = primaryGpu.subsystemId;
     *pRevisionId = primaryGpu.revisionId;
     *pExtDeviceId = primaryGpu.deviceId;
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetPCIIdentifiers", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GPU_GetFullName(NvPhysicalGpuHandle hPhysicalGpu, NvAPI_ShortString szName)
 {
+    const auto callerAddress = _ReturnAddress();
     tonvss(szName, "NVIDIA GeForce RTX 4090");
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetFullName", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GPU_GetGpuCoreCount(NvPhysicalGpuHandle hPhysicalGpu, NvU32* pCount)
@@ -266,10 +302,13 @@ NvAPI_Status __cdecl NvAPI_GPU_GetAllClockFrequencies(NvPhysicalGpuHandle hPhysi
 
 NvAPI_Status __cdecl NvAPI_GPU_GetAdapterIdFromPhysicalGpu(NvPhysicalGpuHandle hPhysicalGpu, void* pOSAdapterId)
 {
+    const auto callerAddress = _ReturnAddress();
     auto primaryGpu = IdentifyGpu::getPrimaryGpu();
 
     memcpy(pOSAdapterId, &primaryGpu.luid, sizeof(primaryGpu.luid));
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetAdapterIdFromPhysicalGpu", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GPU_GetPstates20(NvPhysicalGpuHandle hPhysicalGpu, NV_GPU_PERF_PSTATES20_INFO* pPstatesInfo)
@@ -359,6 +398,7 @@ NvAPI_Status __cdecl NvAPI_Mosaic_GetDisplayViewportsByResolution(NvU32 displayI
 
 NvAPI_Status __cdecl NvAPI_SYS_GetDisplayDriverInfo(NV_DISPLAY_DRIVER_INFO* driverInfo)
 {
+    const auto callerAddress = _ReturnAddress();
     driverInfo->driverVersion = 99999;
     tonvss(driverInfo->szBuildBranch, "buildBranch");
     driverInfo->bIsDCHDriver = 1;
@@ -367,14 +407,19 @@ NvAPI_Status __cdecl NvAPI_SYS_GetDisplayDriverInfo(NV_DISPLAY_DRIVER_INFO* driv
     driverInfo->bIsNVIDIARTXNewFeatureBranchPackage = 1;
     if (driverInfo->version == 2)
         tonvss(driverInfo->szBuildBaseBranch, "buildBaseBranch");
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_SYS_GetDisplayDriverInfo", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_SYS_GetDriverAndBranchVersion(NvU32* pDriverVersion, NvAPI_ShortString szBuildBranchString)
 {
+    const auto callerAddress = _ReturnAddress();
     *pDriverVersion = 99999;
     tonvss(szBuildBranchString, "buildBranch");
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_SYS_GetDriverAndBranchVersion", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_SYS_GetDisplayIdFromGpuAndOutputId(NvPhysicalGpuHandle hPhysicalGpu, NvU32 outputId,
@@ -403,12 +448,20 @@ NvAPI_Status __cdecl NvAPI_D3D_SetResourceHint() { return ERROR_VALUE(NVAPI_NO_I
 
 NvAPI_Status __cdecl NvAPI_D3D_GetSleepStatus(IUnknown* pDevice, NV_GET_SLEEP_STATUS_PARAMS* pGetSleepStatusParams)
 {
+    const auto callerAddress = _ReturnAddress();
     if (!pDevice || !pGetSleepStatusParams)
-        return ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+    {
+        const auto status = ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+        ReflexNvapiGateDiag::logCall("NvAPI_D3D_GetSleepStatus", status, callerAddress);
+        return status;
+    }
 
     const auto status = LowLatencyCtx::get()->GetSleepStatus(pDevice, pGetSleepStatusParams);
     if (status == NVAPI_OK || !shouldFixSlReflexAvailabilityOnIntel(pDevice))
+    {
+        ReflexNvapiGateDiag::logCall("NvAPI_D3D_GetSleepStatus", status, callerAddress);
         return status;
+    }
 
     pGetSleepStatusParams->bLowLatencyMode = 0;
     pGetSleepStatusParams->bFsVrr = 0;
@@ -422,45 +475,77 @@ NvAPI_Status __cdecl NvAPI_D3D_GetSleepStatus(IUnknown* pDevice, NV_GET_SLEEP_ST
         fallbackLogged = true;
     }
 
+    ReflexNvapiGateDiag::logCall("NvAPI_D3D_GetSleepStatus", NVAPI_OK, callerAddress);
     return NVAPI_OK;
 }
 
 NvAPI_Status __cdecl NvAPI_D3D_GetLatency(IUnknown* pDevice, NV_LATENCY_RESULT_PARAMS* pGetLatencyParams)
 {
+    const auto callerAddress = _ReturnAddress();
     if (!pDevice || !pGetLatencyParams)
-        return ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+    {
+        const auto status = ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+        ReflexNvapiGateDiag::logCall("NvAPI_D3D_GetLatency", status, callerAddress);
+        return status;
+    }
 
     // xellGetFramesReports() currently doesn't give any extra data that we can't already get
-    return LowLatencyCtx::get()->GetLatency(pDevice, pGetLatencyParams);
+    const auto status = LowLatencyCtx::get()->GetLatency(pDevice, pGetLatencyParams);
+    ReflexNvapiGateDiag::logCall("NvAPI_D3D_GetLatency", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_D3D_SetSleepMode(IUnknown* pDevice, NV_SET_SLEEP_MODE_PARAMS* pSetSleepModeParams)
 {
+    const auto callerAddress = _ReturnAddress();
     if (!pDevice || !pSetSleepModeParams)
-        return ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+    {
+        const auto status = ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+        ReflexNvapiGateDiag::logCall("NvAPI_D3D_SetSleepMode", status, callerAddress);
+        return status;
+    }
 
-    return LowLatencyCtx::get()->SetSleepMode(pDevice, pSetSleepModeParams);
+    const auto status = LowLatencyCtx::get()->SetSleepMode(pDevice, pSetSleepModeParams);
+    ReflexNvapiGateDiag::logCall("NvAPI_D3D_SetSleepMode", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_D3D_SetLatencyMarker(IUnknown* pDevice, NV_LATENCY_MARKER_PARAMS* pSetLatencyMarkerParams)
 {
+    const auto callerAddress = _ReturnAddress();
     if (!pDevice || !pSetLatencyMarkerParams)
-        return ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+    {
+        const auto status = ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+        ReflexNvapiGateDiag::logCall("NvAPI_D3D_SetLatencyMarker", status, callerAddress);
+        return status;
+    }
 
-    return LowLatencyCtx::get()->SetLatencyMarker(pDevice, pSetLatencyMarkerParams);
+    const auto status = LowLatencyCtx::get()->SetLatencyMarker(pDevice, pSetLatencyMarkerParams);
+    ReflexNvapiGateDiag::logCall("NvAPI_D3D_SetLatencyMarker", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_D3D_Sleep(IUnknown* pDevice)
 {
+    const auto callerAddress = _ReturnAddress();
     if (!pDevice)
-        return ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+    {
+        const auto status = ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
+        ReflexNvapiGateDiag::logCall("NvAPI_D3D_Sleep", status, callerAddress);
+        return status;
+    }
 
-    return LowLatencyCtx::get()->Sleep(pDevice);
+    const auto status = LowLatencyCtx::get()->Sleep(pDevice);
+    ReflexNvapiGateDiag::logCall("NvAPI_D3D_Sleep", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_D3D_SetReflexSync(IUnknown* pDevice, NV_SET_REFLEX_SYNC_PARAMS* pSetReflexSyncParams)
 {
-    return OK();
+    const auto callerAddress = _ReturnAddress();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_D3D_SetReflexSync", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_D3D11_IsNvShaderExtnOpCodeSupported(IUnknown* invalid, NvU32 opCode, bool* pSupported)
@@ -811,12 +896,15 @@ NvAPI_Status __cdecl NvAPI_DRS_DestroySession(NvDRSSessionHandle session) { retu
 
 NvAPI_Status __cdecl NvAPI_NGX_GetDriverFeatureSupport(NV_NGX_GET_DRIVER_FEATURE_SUPPORT_PARAMS* pParams)
 {
+    const auto callerAddress = _ReturnAddress();
     for (size_t i = 0; i < pParams->featureCount; i++)
     {
         if (pParams->featureSupportInfo[i].featureId == NV_NGX_DRIVER_FEATURE_ID_SET_FLIP_CONFIG_V2)
             pParams->featureSupportInfo[i].bSupported = NV_TRUE;
     }
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logCall("NvAPI_NGX_GetDriverFeatureSupport", status, callerAddress);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_Unknown_1(IUnknown* unknown, uint32_t* pMiscUnk)
