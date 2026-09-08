@@ -179,7 +179,7 @@ NvAPI_Status __cdecl NvAPI_GetDisplayDriverVersion(NvDisplayHandle hNvDisplay, N
     if (!pVersion)
     {
         const auto status = ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
-        ReflexNvapiGateDiag::logCall("NvAPI_GetDisplayDriverVersion", status, callerAddress);
+        ReflexNvapiGateDiag::logDriverCall("NvAPI_GetDisplayDriverVersion", status, callerAddress, 0, nullptr, nullptr);
         return status;
     }
 
@@ -187,7 +187,8 @@ NvAPI_Status __cdecl NvAPI_GetDisplayDriverVersion(NvDisplayHandle hNvDisplay, N
     tonvss(pVersion->szBuildBranchString, "buildBranch");
     tonvss(pVersion->szAdapterString, "NVIDIA GeForce RTX 4090");
     const auto status = OK();
-    ReflexNvapiGateDiag::logCall("NvAPI_GetDisplayDriverVersion", status, callerAddress);
+    ReflexNvapiGateDiag::logDriverCall("NvAPI_GetDisplayDriverVersion", status, callerAddress, pVersion->drvVersion,
+                                       pVersion->szBuildBranchString, pVersion->szAdapterString);
     return status;
 }
 
@@ -212,6 +213,7 @@ NvAPI_Status __cdecl NvAPI_GPU_GetConnectedDisplayIds(NvPhysicalGpuHandle handle
 
 NvAPI_Status __cdecl NvAPI_GPU_GetArchInfo(NvPhysicalGpuHandle handle, NV_GPU_ARCH_INFO* archInfo)
 {
+    const auto callerAddress = _ReturnAddress();
     archInfo->architecture = NV_GPU_ARCHITECTURE_AD100;
     archInfo->architecture_id = NV_GPU_ARCHITECTURE_AD100;
     archInfo->implementation = NV_GPU_ARCH_IMPLEMENTATION_AD102;
@@ -219,7 +221,9 @@ NvAPI_Status __cdecl NvAPI_GPU_GetArchInfo(NvPhysicalGpuHandle handle, NV_GPU_AR
     archInfo->revision = NV_GPU_CHIP_REV_UNKNOWN;
     archInfo->revision_id = NV_GPU_CHIP_REV_UNKNOWN;
 
-    return OK();
+    const auto status = OK();
+    ReflexNvapiGateDiag::logGpuArchCall("NvAPI_GPU_GetArchInfo", status, callerAddress, archInfo);
+    return status;
 }
 
 NvAPI_Status __cdecl NvAPI_GPU_GetLogicalGpuInfo(NvLogicalGpuHandle logicalHandle, NV_LOGICAL_GPU_DATA* logicalGpuData)
@@ -246,7 +250,8 @@ NvAPI_Status __cdecl NvAPI_GPU_GetPCIIdentifiers(NvPhysicalGpuHandle hPhysicalGp
     *pRevisionId = primaryGpu.revisionId;
     *pExtDeviceId = primaryGpu.deviceId;
     const auto status = OK();
-    ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetPCIIdentifiers", status, callerAddress);
+    ReflexNvapiGateDiag::logGpuPciCall("NvAPI_GPU_GetPCIIdentifiers", status, callerAddress, *pDeviceId & 0xFFFF,
+                                       (*pDeviceId >> 16) & 0xFFFF, *pSubSystemId, *pRevisionId);
     return status;
 }
 
@@ -255,7 +260,7 @@ NvAPI_Status __cdecl NvAPI_GPU_GetFullName(NvPhysicalGpuHandle hPhysicalGpu, NvA
     const auto callerAddress = _ReturnAddress();
     tonvss(szName, "NVIDIA GeForce RTX 4090");
     const auto status = OK();
-    ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetFullName", status, callerAddress);
+    ReflexNvapiGateDiag::logGpuNameCall("NvAPI_GPU_GetFullName", status, callerAddress, szName);
     return status;
 }
 
@@ -408,7 +413,8 @@ NvAPI_Status __cdecl NvAPI_SYS_GetDisplayDriverInfo(NV_DISPLAY_DRIVER_INFO* driv
     if (driverInfo->version == 2)
         tonvss(driverInfo->szBuildBaseBranch, "buildBaseBranch");
     const auto status = OK();
-    ReflexNvapiGateDiag::logCall("NvAPI_SYS_GetDisplayDriverInfo", status, callerAddress);
+    ReflexNvapiGateDiag::logDriverCall("NvAPI_SYS_GetDisplayDriverInfo", status, callerAddress,
+                                       driverInfo->driverVersion, driverInfo->szBuildBranch, nullptr);
     return status;
 }
 
@@ -418,7 +424,8 @@ NvAPI_Status __cdecl NvAPI_SYS_GetDriverAndBranchVersion(NvU32* pDriverVersion, 
     *pDriverVersion = 99999;
     tonvss(szBuildBranchString, "buildBranch");
     const auto status = OK();
-    ReflexNvapiGateDiag::logCall("NvAPI_SYS_GetDriverAndBranchVersion", status, callerAddress);
+    ReflexNvapiGateDiag::logDriverCall("NvAPI_SYS_GetDriverAndBranchVersion", status, callerAddress, *pDriverVersion,
+                                       szBuildBranchString, nullptr);
     return status;
 }
 
@@ -903,7 +910,7 @@ NvAPI_Status __cdecl NvAPI_NGX_GetDriverFeatureSupport(NV_NGX_GET_DRIVER_FEATURE
             pParams->featureSupportInfo[i].bSupported = NV_TRUE;
     }
     const auto status = OK();
-    ReflexNvapiGateDiag::logCall("NvAPI_NGX_GetDriverFeatureSupport", status, callerAddress);
+    ReflexNvapiGateDiag::logNgxCall("NvAPI_NGX_GetDriverFeatureSupport", status, callerAddress, pParams);
     return status;
 }
 

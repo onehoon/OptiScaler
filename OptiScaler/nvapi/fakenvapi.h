@@ -9,6 +9,15 @@ namespace ReflexNvapiGateDiag
 {
 void logQuery(NvU32 id, const char* name, const char* resolution, void* function, bool cacheHit, void* callerAddress);
 void logCall(const char* functionName, NvAPI_Status status, void* callerAddress);
+void logGpuArchCall(const char* functionName, NvAPI_Status status, void* callerAddress,
+                    const NV_GPU_ARCH_INFO* archInfo);
+void logGpuPciCall(const char* functionName, NvAPI_Status status, void* callerAddress, NvU32 vendorId, NvU32 deviceId,
+                   NvU32 subsystemId, NvU32 revisionId);
+void logGpuNameCall(const char* functionName, NvAPI_Status status, void* callerAddress, const char* name);
+void logDriverCall(const char* functionName, NvAPI_Status status, void* callerAddress, NvU32 driverVersion,
+                   const char* branch, const char* adapter);
+void logNgxCall(const char* functionName, NvAPI_Status status, void* callerAddress,
+                const NV_NGX_GET_DRIVER_FEATURE_SUPPORT_PARAMS* params);
 } // namespace ReflexNvapiGateDiag
 
 class fakenvapi

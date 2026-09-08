@@ -3,9 +3,11 @@
 #include "proxies/FfxApi_Proxy.h"
 #include "State.h"
 #include "Util.h"
+#include <misc/IdentifyGpu.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
+#include <atomic>
 
 #include "fakenvapi.h"
 #include "NvApiTypes.h"
@@ -23,17 +25,44 @@ namespace
 {
 bool enabled()
 {
-    const auto& state = State::Instance();
-    if (static_cast<bool>(state.gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel))
-        return true;
+    static std::atomic<int> cachedEnabled { -1 };
+    const auto cached = cachedEnabled.load(std::memory_order_relaxed);
+    if (cached >= 0)
+        return cached != 0;
 
-    return _stricmp(state.gameExe.c_str(), "dd2.exe") == 0 || _stricmp(state.gameExe.c_str(), "dd2ccs.exe") == 0;
+    const auto& state = State::Instance();
+    const bool target = static_cast<bool>(state.gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
+    const bool control =
+        _stricmp(state.gameExe.c_str(), "dd2.exe") == 0 || _stricmp(state.gameExe.c_str(), "dd2ccs.exe") == 0;
+    if (!target && !control)
+        return false;
+
+    const auto vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
+    if (vendorId == VendorId::Invalid)
+        return false;
+
+    const bool result = vendorId == VendorId::Intel;
+    cachedEnabled.store(result ? 1 : 0, std::memory_order_relaxed);
+    return result;
 }
 
 std::string callerName(void* callerAddress)
 {
     auto name = Util::WhoIsTheCaller(callerAddress);
     return name.empty() ? "unknown" : name;
+}
+
+bool beginCallLog(const char* functionName, void* callerAddress)
+{
+    if (!enabled() || functionName == nullptr)
+        return false;
+
+    static std::mutex logMutex;
+    static std::unordered_map<void*, std::unordered_set<std::string_view>> loggedCalls;
+
+    std::scoped_lock lock(logMutex);
+    auto& functions = loggedCalls[callerAddress];
+    return functions.emplace(functionName).second;
 }
 } // namespace
 
@@ -65,21 +94,95 @@ void logQuery(NvU32 id, const char* name, const char* resolution, void* function
 
 void logCall(const char* functionName, NvAPI_Status status, void* callerAddress)
 {
-    if (!enabled() || functionName == nullptr)
+    if (!beginCallLog(functionName, callerAddress))
         return;
 
-    static std::mutex logMutex;
-    static std::unordered_set<std::string> loggedCalls;
+    const auto caller = callerName(callerAddress);
+    LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X}", caller, functionName,
+             static_cast<uint32_t>(status));
+}
+
+void logGpuArchCall(const char* functionName, NvAPI_Status status, void* callerAddress,
+                    const NV_GPU_ARCH_INFO* archInfo)
+{
+    if (!beginCallLog(functionName, callerAddress))
+        return;
 
     const auto caller = callerName(callerAddress);
-    const auto key = std::format("{}|{}", caller, functionName);
-
-    std::scoped_lock lock(logMutex);
-    if (loggedCalls.emplace(key).second)
+    if (archInfo == nullptr)
     {
-        LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X}", caller, functionName,
+        LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X} output=null", caller, functionName,
                  static_cast<uint32_t>(status));
+        return;
     }
+
+    LOG_INFO(
+        "[ReflexNvapiGate] Call caller={} function={} status=0x{:08X} architecture=0x{:08X} implementation=0x{:08X} "
+        "revision=0x{:08X}",
+        caller, functionName, static_cast<uint32_t>(status), archInfo->architecture, archInfo->implementation,
+        archInfo->revision);
+}
+
+void logGpuPciCall(const char* functionName, NvAPI_Status status, void* callerAddress, NvU32 vendorId, NvU32 deviceId,
+                   NvU32 subsystemId, NvU32 revisionId)
+{
+    if (!beginCallLog(functionName, callerAddress))
+        return;
+
+    const auto caller = callerName(callerAddress);
+    LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X} vendor=0x{:04X} device=0x{:04X} "
+             "subsystem=0x{:08X} revision=0x{:08X}",
+             caller, functionName, static_cast<uint32_t>(status), vendorId, deviceId, subsystemId, revisionId);
+}
+
+void logGpuNameCall(const char* functionName, NvAPI_Status status, void* callerAddress, const char* name)
+{
+    if (!beginCallLog(functionName, callerAddress))
+        return;
+
+    const auto caller = callerName(callerAddress);
+    LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X} name={}", caller, functionName,
+             static_cast<uint32_t>(status), name != nullptr ? name : "<null>");
+}
+
+void logDriverCall(const char* functionName, NvAPI_Status status, void* callerAddress, NvU32 driverVersion,
+                   const char* branch, const char* adapter)
+{
+    if (!beginCallLog(functionName, callerAddress))
+        return;
+
+    const auto caller = callerName(callerAddress);
+    LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X} driver=0x{:08X} branch={} adapter={}",
+             caller, functionName, static_cast<uint32_t>(status), driverVersion, branch != nullptr ? branch : "<null>",
+             adapter != nullptr ? adapter : "<null>");
+}
+
+void logNgxCall(const char* functionName, NvAPI_Status status, void* callerAddress,
+                const NV_NGX_GET_DRIVER_FEATURE_SUPPORT_PARAMS* params)
+{
+    if (!beginCallLog(functionName, callerAddress))
+        return;
+
+    const auto caller = callerName(callerAddress);
+    if (params == nullptr)
+    {
+        LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X} features=null", caller, functionName,
+                 static_cast<uint32_t>(status));
+        return;
+    }
+
+    std::string features;
+    const auto count = std::min(params->featureCount, static_cast<NvU32>(NVAPI_MAX_NGX_FEATURES_PER_QUERY));
+    for (NvU32 i = 0; i < count; ++i)
+    {
+        if (!features.empty())
+            features += ",";
+        features += std::format("0x{:08X}:{}", static_cast<NvU32>(params->featureSupportInfo[i].featureId),
+                                params->featureSupportInfo[i].bSupported ? "supported" : "unsupported");
+    }
+
+    LOG_INFO("[ReflexNvapiGate] Call caller={} function={} status=0x{:08X} featureCount={} features=[{}]", caller,
+             functionName, static_cast<uint32_t>(status), params->featureCount, features);
 }
 } // namespace ReflexNvapiGateDiag
 

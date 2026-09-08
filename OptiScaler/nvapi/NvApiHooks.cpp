@@ -26,7 +26,7 @@ NvAPI_Status __stdcall NvApiHooks::hkNvAPI_GPU_GetArchInfo(NvPhysicalGpuHandle h
     if (!o_NvAPI_GPU_GetArchInfo)
     {
         LOG_DEBUG("nullptr");
-        ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetArchInfo", NVAPI_ERROR, callerAddress);
+        ReflexNvapiGateDiag::logGpuArchCall("NvAPI_GPU_GetArchInfo", NVAPI_ERROR, callerAddress, nullptr);
         return NVAPI_ERROR;
     }
 
@@ -58,7 +58,7 @@ NvAPI_Status __stdcall NvApiHooks::hkNvAPI_GPU_GetArchInfo(NvPhysicalGpuHandle h
         }
     }
 
-    ReflexNvapiGateDiag::logCall("NvAPI_GPU_GetArchInfo", status, callerAddress);
+    ReflexNvapiGateDiag::logGpuArchCall("NvAPI_GPU_GetArchInfo", status, callerAddress, pGpuArchInfo);
     return status;
 }
 
