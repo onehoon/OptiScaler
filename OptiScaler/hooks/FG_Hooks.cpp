@@ -1340,11 +1340,11 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 {
                     releaseSucceeded =
                         xefg->ReleaseSwapchainFromFinalProxyRelease(
-                            _hwnd,
-                            [This]()
-                            {
-                                o_FGRelease(This);
-                            });
+                                                                    _hwnd,
+                                                                    [This]()
+                                                                    {
+                                                                        o_FGRelease(This);
+                                                                    });
                 }
                 else
                 {
