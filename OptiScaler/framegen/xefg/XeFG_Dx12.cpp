@@ -52,7 +52,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
     {
         auto result = XeFGProxy::D3D12CreateContext()(device, &_swapChainContext);
 
-        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) < 0)
         {
             LOG_ERROR("D3D12CreateContext error: {} ({})", magic_enum::enum_name(result), (UINT) result);
             return false;
@@ -62,7 +62,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
         result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                  nullptr);
 
-        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) < 0)
         {
             LOG_ERROR("SetLoggingCallback error: {} ({})", magic_enum::enum_name(result), (UINT) result);
         }
@@ -86,7 +86,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, fakenvapi::getCurrentContext());
 
-            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(result) < 0)
             {
                 LOG_ERROR("SetLatencyReduction error: {} ({})", magic_enum::enum_name(result), (UINT) result);
                 return false;
@@ -112,7 +112,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, (xell_context_handle_t) localXellContext);
 
-            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(result) < 0)
             {
                 LOG_ERROR("SetLatencyReduction error: {} ({})", magic_enum::enum_name(result), (UINT) result);
                 return false;
@@ -177,9 +177,9 @@ bool XeFG_Dx12::DestroySwapchainContext()
     auto result = XeFGProxy::Destroy()(context);
 
     LOG_INFO("[XeFG][Lifecycle] action = destroy_return, context = {:X}, result = {} ({})", (size_t) context,
-             magic_enum::enum_name(result), (UINT) result);
+             magic_enum::enum_name(result), static_cast<int32_t>(result));
 
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         _swapChainContext = context;
         LOG_ERROR("[XeFG][Lifecycle] action = destroy_failed, context = {:X}, retained = true", (size_t) context);
@@ -313,7 +313,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
-        if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) >= 0)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
             LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
@@ -433,7 +433,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                      &params);
 
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12InitFromSwapChainDesc error: {} ({:X})", magic_enum::enum_name(result), (UINT) result);
         return false;
@@ -441,7 +441,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 
     LOG_INFO("XeFG swapchain created");
     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12GetSwapChainPtr error: {} ({})", magic_enum::enum_name(result), (UINT) result);
         return false;
@@ -529,7 +529,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
-        if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) >= 0)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
             LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
@@ -615,7 +615,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
                                                          factory12, &params);
     }
 
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12InitFromSwapChainDesc error: {} ({})", magic_enum::enum_name(result), (UINT) result);
         return false;
@@ -623,7 +623,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
     LOG_INFO("XeFG swapchain created");
     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12GetSwapChainPtr error: {} ({})", magic_enum::enum_name(result), (UINT) result);
         return false;
@@ -679,7 +679,7 @@ void XeFG_Dx12::Activate()
     {
         auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
 
-        if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) >= 0)
         {
             _isActive = true;
             _lastDispatchedFrame = 0;
@@ -716,7 +716,7 @@ void XeFG_Dx12::Deactivate()
         if (_swapChainContext != nullptr)
         {
             result = XeFGProxy::SetEnabled()(_swapChainContext, false);
-            if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(result) >= 0)
                 _isActive = false;
         }
         else
@@ -799,7 +799,7 @@ bool XeFG_Dx12::Dispatch()
 
         auto uiResult = XeFGProxy::SetUiCompositionState()(_swapChainContext, uiState);
 
-        if (uiResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(uiResult) < 0)
             LOG_ERROR("SetUiCompositionState error: {} ({})", magic_enum::enum_name(uiResult), (UINT) uiResult);
     }
 
@@ -828,7 +828,7 @@ bool XeFG_Dx12::Dispatch()
 
             _framesToInterpolate = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
 
-            if (intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(intResult) < 0)
             {
                 LOG_ERROR("SetNumInterpolatedFrames error: {} ({})", magic_enum::enum_name(intResult),
                           (UINT) intResult);
@@ -977,7 +977,7 @@ bool XeFG_Dx12::Dispatch()
     auto frameId = static_cast<uint32_t>(willDispatchFrame);
 
     auto result = XeFGProxy::TagFrameConstants()(_swapChainContext, frameId, &constData);
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("TagFrameConstants error: {} ({})", magic_enum::enum_name(result), (UINT) result);
 
@@ -989,7 +989,7 @@ bool XeFG_Dx12::Dispatch()
     }
 
     result = XeFGProxy::SetPresentId()(_swapChainContext, frameId);
-    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+    if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("SetPresentId error: {} ({})", magic_enum::enum_name(result), (UINT) result);
 
@@ -1040,7 +1040,7 @@ bool XeFG_Dx12::Dispatch()
 
         result = XeFGProxy::D3D12TagFrameResource()(_swapChainContext, (ID3D12CommandList*) 1, frameId, &backbuffer);
 
-        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        if (static_cast<int32_t>(result) < 0)
         {
             LOG_ERROR("D3D12TagFrameResource Backbuffer error: {} ({})", magic_enum::enum_name(result), (UINT) result);
 
@@ -1642,7 +1642,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
             LOG_DEBUG("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,
                       magic_enum::enum_name(type), magic_enum::enum_name(result), (int32_t) result);
 
-            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (static_cast<int32_t>(result) < 0)
             {
                 State::Instance().fgChanged = true;
                 UpdateTarget();
