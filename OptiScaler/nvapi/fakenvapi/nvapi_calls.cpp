@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "nvapi_calls.h"
+#include <nvapi/fakenvapi.h>
 #include "proxies/Dxgi_Proxy.h"
+#include <Config.h>
 #include <misc/IdentifyGpu.h>
 #include <NvApiDriverSettings.h>
 #include <hooks/Vulkan_Hooks.h>
@@ -12,6 +14,15 @@ static auto init_mutex = std::mutex {};
 
 namespace nvapi_calls
 {
+
+static bool shouldFixSlReflexAvailabilityOnIntel()
+{
+    if (!static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel) ||
+        !Config::Instance()->StreamlineSpoofing.value_or_default() || !fakenvapi::isUsingAsMainNvapi())
+        return false;
+
+    return IdentifyGpu::getPrimaryGpu().vendorId == VendorId::Intel;
+}
 
 NvAPI_Status __cdecl NvAPI_Initialize()
 {
@@ -351,7 +362,22 @@ NvAPI_Status __cdecl NvAPI_D3D_GetSleepStatus(IUnknown* pDevice, NV_GET_SLEEP_ST
     if (!pDevice || !pGetSleepStatusParams)
         return ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
 
-    return LowLatencyCtx::get()->GetSleepStatus(pDevice, pGetSleepStatusParams);
+    const auto status = LowLatencyCtx::get()->GetSleepStatus(pDevice, pGetSleepStatusParams);
+    if (status == NVAPI_OK || !shouldFixSlReflexAvailabilityOnIntel())
+        return status;
+
+    pGetSleepStatusParams->bLowLatencyMode = 0;
+    pGetSleepStatusParams->bFsVrr = 0;
+    pGetSleepStatusParams->bCplVsyncOn = 0;
+
+    static bool fallbackLogged = false;
+    if (!fallbackLogged)
+    {
+        LOG_WARN("Applying Intel Streamline Reflex availability compatibility fallback");
+        fallbackLogged = true;
+    }
+
+    return NVAPI_OK;
 }
 
 NvAPI_Status __cdecl NvAPI_D3D_GetLatency(IUnknown* pDevice, NV_LATENCY_RESULT_PARAMS* pGetLatencyParams)

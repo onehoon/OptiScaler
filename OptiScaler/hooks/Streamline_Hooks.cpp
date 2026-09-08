@@ -1362,17 +1362,9 @@ sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
     const bool fakeNvapiIsMain = fakenvapi::isUsingAsMainNvapi();
 
     VendorId::Value vendorId = VendorId::Invalid;
-    bool overrideApplied = false;
 
     if (result == sl::Result::eOk && quirkEnabled && streamlineSpoofing && fakeNvapiIsMain)
-    {
         vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
-        if (vendorId == VendorId::Intel)
-        {
-            state.lowLatencyAvailable = true;
-            overrideApplied = true;
-        }
-    }
 
     static bool hasLogged = false;
     static uint32_t lastResult = 0;
@@ -1382,19 +1374,17 @@ sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
     static bool lastQuirkEnabled = false;
     static bool lastStreamlineSpoofing = false;
     static bool lastFakeNvapiIsMain = false;
-    static bool lastOverrideApplied = false;
 
     const auto resultValue = static_cast<uint32_t>(result);
     if (!hasLogged || lastResult != resultValue || lastVendorId != vendorId ||
         lastOriginalLowLatencyAvailable != originalLowLatencyAvailable ||
         lastReturnedLowLatencyAvailable != state.lowLatencyAvailable || lastQuirkEnabled != quirkEnabled ||
-        lastStreamlineSpoofing != streamlineSpoofing || lastFakeNvapiIsMain != fakeNvapiIsMain ||
-        lastOverrideApplied != overrideApplied)
+        lastStreamlineSpoofing != streamlineSpoofing || lastFakeNvapiIsMain != fakeNvapiIsMain)
     {
         LOG_INFO("Reflex GetState: result={}, vendor={}, original lowLatencyAvailable={}, returned={}, quirk={}, "
-                 "streamlineSpoofing={}, fakeNvapiMain={}, override={}",
+                 "streamlineSpoofing={}, fakeNvapiMain={}",
                  magic_enum::enum_name(result), magic_enum::enum_name(vendorId), originalLowLatencyAvailable,
-                 state.lowLatencyAvailable, quirkEnabled, streamlineSpoofing, fakeNvapiIsMain, overrideApplied);
+                 state.lowLatencyAvailable, quirkEnabled, streamlineSpoofing, fakeNvapiIsMain);
 
         hasLogged = true;
         lastResult = resultValue;
@@ -1404,7 +1394,6 @@ sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
         lastQuirkEnabled = quirkEnabled;
         lastStreamlineSpoofing = streamlineSpoofing;
         lastFakeNvapiIsMain = fakeNvapiIsMain;
-        lastOverrideApplied = overrideApplied;
     }
 
     return result;
