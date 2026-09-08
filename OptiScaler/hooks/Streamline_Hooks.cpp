@@ -1353,6 +1353,52 @@ sl::Result StreamlineHooks::hkslReflexSetOptions(const sl::ReflexOptions& option
     return o_slReflexSetOptions(newOptions);
 }
 
+sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
+{
+    const auto result = o_slReflexGetState(state);
+    const bool originalLowLatencyAvailable = state.lowLatencyAvailable;
+    const bool quirkEnabled = static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
+    const bool streamlineSpoofing = Config::Instance()->StreamlineSpoofing.value_or_default();
+    const bool fakeNvapiIsMain = fakenvapi::isUsingAsMainNvapi();
+
+    VendorId::Value vendorId = VendorId::Invalid;
+
+    if (result == sl::Result::eOk && quirkEnabled && streamlineSpoofing && fakeNvapiIsMain)
+        vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
+
+    static bool hasLogged = false;
+    static uint32_t lastResult = 0;
+    static VendorId::Value lastVendorId = VendorId::Invalid;
+    static bool lastOriginalLowLatencyAvailable = false;
+    static bool lastReturnedLowLatencyAvailable = false;
+    static bool lastQuirkEnabled = false;
+    static bool lastStreamlineSpoofing = false;
+    static bool lastFakeNvapiIsMain = false;
+
+    const auto resultValue = static_cast<uint32_t>(result);
+    if (!hasLogged || lastResult != resultValue || lastVendorId != vendorId ||
+        lastOriginalLowLatencyAvailable != originalLowLatencyAvailable ||
+        lastReturnedLowLatencyAvailable != state.lowLatencyAvailable || lastQuirkEnabled != quirkEnabled ||
+        lastStreamlineSpoofing != streamlineSpoofing || lastFakeNvapiIsMain != fakeNvapiIsMain)
+    {
+        LOG_INFO("Reflex GetState: result={}, vendor={}, original lowLatencyAvailable={}, returned={}, quirk={}, "
+                 "streamlineSpoofing={}, fakeNvapiMain={}",
+                 magic_enum::enum_name(result), magic_enum::enum_name(vendorId), originalLowLatencyAvailable,
+                 state.lowLatencyAvailable, quirkEnabled, streamlineSpoofing, fakeNvapiIsMain);
+
+        hasLogged = true;
+        lastResult = resultValue;
+        lastVendorId = vendorId;
+        lastOriginalLowLatencyAvailable = originalLowLatencyAvailable;
+        lastReturnedLowLatencyAvailable = state.lowLatencyAvailable;
+        lastQuirkEnabled = quirkEnabled;
+        lastStreamlineSpoofing = streamlineSpoofing;
+        lastFakeNvapiIsMain = fakeNvapiIsMain;
+    }
+
+    return result;
+}
+
 sl::Result StreamlineHooks::hkslReflexSleep(const sl::FrameToken& frame)
 {
     // if (State::Instance().activeFgOutput == FGOutput::DLSSG && StreamlineProxy::IsD3D12Inited() &&
@@ -1499,6 +1545,17 @@ void* StreamlineHooks::hkreflex_slGetPluginFunction(const char* functionName)
     {
         o_slReflexSetOptions = (decltype(&slReflexSetOptions)) o_reflex_slGetPluginFunction(functionName);
         return &hkslReflexSetOptions;
+    }
+
+    if (strcmp(functionName, "slReflexGetState") == 0 &&
+        State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel)
+    {
+        o_slReflexGetState = (decltype(&slReflexGetState)) o_reflex_slGetPluginFunction(functionName);
+
+        if (o_slReflexGetState != nullptr)
+            return &hkslReflexGetState;
+
+        return nullptr;
     }
 
     if (strcmp(functionName, "slReflexSleep") == 0)

@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "nvapi_calls.h"
+#include <nvapi/fakenvapi.h>
 #include "proxies/Dxgi_Proxy.h"
+#include <Config.h>
 #include <misc/IdentifyGpu.h>
 #include <NvApiDriverSettings.h>
 #include <hooks/Vulkan_Hooks.h>
@@ -12,6 +14,59 @@ static auto init_mutex = std::mutex {};
 
 namespace nvapi_calls
 {
+
+static VendorId::Value getDeviceVendor(IUnknown* pDevice)
+{
+    if (!pDevice)
+        return VendorId::Invalid;
+
+    LUID adapterLuid {};
+    bool haveLuid = false;
+
+    ComPtr<ID3D12Device> d3d12Device;
+    if (SUCCEEDED(pDevice->QueryInterface(IID_PPV_ARGS(&d3d12Device))))
+    {
+        adapterLuid = d3d12Device->GetAdapterLuid();
+        haveLuid = true;
+    }
+    else
+    {
+        ComPtr<IDXGIDevice> dxgiDevice;
+        if (SUCCEEDED(pDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice))))
+        {
+            ComPtr<IDXGIAdapter> adapter;
+            if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) && adapter)
+            {
+                DXGI_ADAPTER_DESC desc {};
+                if (SUCCEEDED(adapter->GetDesc(&desc)))
+                {
+                    adapterLuid = desc.AdapterLuid;
+                    haveLuid = true;
+                }
+            }
+        }
+    }
+
+    if (!haveLuid)
+        return VendorId::Invalid;
+
+    for (const auto& gpu : IdentifyGpu::getAllGpus())
+    {
+        if (IsEqualLUID(gpu.luid, adapterLuid))
+            return gpu.vendorId;
+    }
+
+    return VendorId::Invalid;
+}
+
+static bool shouldFixSlReflexAvailabilityOnIntel(IUnknown* pDevice)
+{
+    if (!static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel) ||
+        !Config::Instance()->StreamlineSpoofing.value_or_default() || !fakenvapi::isUsingAsMainNvapi())
+        return false;
+
+    return getDeviceVendor(pDevice) == VendorId::Intel;
+}
 
 NvAPI_Status __cdecl NvAPI_Initialize()
 {
@@ -351,7 +406,23 @@ NvAPI_Status __cdecl NvAPI_D3D_GetSleepStatus(IUnknown* pDevice, NV_GET_SLEEP_ST
     if (!pDevice || !pGetSleepStatusParams)
         return ERROR_VALUE(NVAPI_INVALID_ARGUMENT);
 
-    return LowLatencyCtx::get()->GetSleepStatus(pDevice, pGetSleepStatusParams);
+    const auto status = LowLatencyCtx::get()->GetSleepStatus(pDevice, pGetSleepStatusParams);
+    if (status == NVAPI_OK || !shouldFixSlReflexAvailabilityOnIntel(pDevice))
+        return status;
+
+    pGetSleepStatusParams->bLowLatencyMode = 0;
+    pGetSleepStatusParams->bFsVrr = 0;
+    pGetSleepStatusParams->bCplVsyncOn = 0;
+
+    static bool fallbackLogged = false;
+    if (!fallbackLogged)
+    {
+        LOG_WARN("Applying Intel Streamline Reflex availability compatibility fallback, original status={:X}",
+                 static_cast<int>(status));
+        fallbackLogged = true;
+    }
+
+    return NVAPI_OK;
 }
 
 NvAPI_Status __cdecl NvAPI_D3D_GetLatency(IUnknown* pDevice, NV_LATENCY_RESULT_PARAMS* pGetLatencyParams)
