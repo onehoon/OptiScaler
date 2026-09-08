@@ -165,7 +165,6 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
                     LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
                 }
             }
-
         }
 
         if (oldSwapChain == previousFGSwapchain)
@@ -286,7 +285,6 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
                     LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
                 }
             }
-
         }
 
         if (oldSwapChain == previousFGSwapchain)
@@ -1340,10 +1338,8 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 LOG_DEBUG("FG Swapchain released, release FG & swapchain context");
                 if (auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG); xefg != nullptr)
                 {
-                    releaseSucceeded = xefg->ReleaseSwapchainFromFinalProxyRelease(
-                        _hwnd, [This]() {
-                            o_FGRelease(This);
-                        });
+                    releaseSucceeded =
+                        xefg->ReleaseSwapchainFromFinalProxyRelease(_hwnd, [This]() { o_FGRelease(This); });
                 }
                 else
                 {

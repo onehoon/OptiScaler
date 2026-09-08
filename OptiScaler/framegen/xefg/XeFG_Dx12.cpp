@@ -137,8 +137,7 @@ bool XeFG_Dx12::AbortSwapchainInitialization(const char* stage)
     if (_swapChainContext == nullptr)
         return false;
 
-    LOG_ERROR("[XeFG][Lifecycle] action = init_aborted, stage = {}, context = {:X}", stage,
-              (size_t) _swapChainContext);
+    LOG_ERROR("[XeFG][Lifecycle] action = init_aborted, stage = {}, context = {:X}", stage, (size_t) _swapChainContext);
 
     if (!DestroySwapchainContext())
     {
@@ -1723,7 +1722,8 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
     }
 
     bool finalProxyReleased = false;
-    auto releaseFinalProxyOnce = [&]() {
+    auto releaseFinalProxyOnce = [&]()
+    {
         if (finalProxyReleased)
             return;
 
