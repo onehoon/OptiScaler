@@ -132,6 +132,23 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
     return createResult;
 }
 
+bool XeFG_Dx12::AbortSwapchainInitialization(const char* stage)
+{
+    if (_swapChainContext == nullptr)
+        return false;
+
+    LOG_ERROR("[XeFG][Lifecycle] action = init_aborted, stage = {}, context = {:X}", stage,
+              (size_t) _swapChainContext);
+
+    if (!DestroySwapchainContext())
+    {
+        LOG_ERROR("[XeFG][Lifecycle] action = init_cleanup_failed, stage = {}, context = {:X}", stage,
+                  (size_t) _swapChainContext);
+    }
+
+    return false;
+}
+
 const char* XeFG_Dx12::Name()
 {
     static std::string nameBuffer;
@@ -312,10 +329,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         if (State::Instance().currentD3D12Device == nullptr)
             return false;
 
-        CreateSwapchainContext(State::Instance().currentD3D12Device);
-
-        if (_swapChainContext == nullptr)
-            return false;
+        if (!CreateSwapchainContext(State::Instance().currentD3D12Device))
+            return AbortSwapchainInitialization("CreateSwapchainContext");
 
         _width = desc->BufferDesc.Width;
         _height = desc->BufferDesc.Height;
@@ -445,7 +460,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12InitFromSwapChainDesc error: {} ({:X})", magic_enum::enum_name(result), (UINT) result);
-        return false;
+        return AbortSwapchainInitialization("D3D12InitFromSwapChainDesc");
     }
 
     LOG_INFO("XeFG swapchain created");
@@ -453,7 +468,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12GetSwapChainPtr error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-        return false;
+        return AbortSwapchainInitialization("D3D12GetSwapChainPtr");
     }
 
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
@@ -535,10 +550,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         if (State::Instance().currentD3D12Device == nullptr)
             return false;
 
-        CreateSwapchainContext(State::Instance().currentD3D12Device);
-
-        if (_swapChainContext == nullptr)
-            return false;
+        if (!CreateSwapchainContext(State::Instance().currentD3D12Device))
+            return AbortSwapchainInitialization("CreateSwapchainContext");
 
         _width = desc->Width;
         _height = desc->Height;
@@ -634,7 +647,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12InitFromSwapChainDesc error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-        return false;
+        return AbortSwapchainInitialization("D3D12InitFromSwapChainDesc");
     }
 
     LOG_INFO("XeFG swapchain created");
@@ -642,7 +655,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     if (static_cast<int32_t>(result) < 0)
     {
         LOG_ERROR("D3D12GetSwapChainPtr error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-        return false;
+        return AbortSwapchainInitialization("D3D12GetSwapChainPtr");
     }
 
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
@@ -1750,11 +1763,18 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
         return false;
     }
 
+    _swapchainReleaseOwnerThread.store(GetCurrentThreadId(), std::memory_order_release);
+
     struct ReleaseGuard
     {
         std::atomic_bool& flag;
-        ~ReleaseGuard() { flag.store(false, std::memory_order_release); }
-    } releaseGuard { _swapchainReleaseInProgress };
+        std::atomic<DWORD>& ownerThread;
+        ~ReleaseGuard()
+        {
+            ownerThread.store(0, std::memory_order_release);
+            flag.store(false, std::memory_order_release);
+        }
+    } releaseGuard { _swapchainReleaseInProgress, _swapchainReleaseOwnerThread };
 
     const bool useConfiguredMutex = Config::Instance()->FGUseMutexForSwapchain.value_or_default();
 

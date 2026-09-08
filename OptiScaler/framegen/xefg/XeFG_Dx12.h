@@ -23,6 +23,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     xefg_swapchain_handle_t _swapChainContext = nullptr;
     xefg_swapchain_handle_t _fgContext = nullptr;
     std::atomic_bool _swapchainReleaseInProgress { false };
+    std::atomic<DWORD> _swapchainReleaseOwnerThread { 0 };
     std::mutex _swapchainLifecycleMutex;
     bool _swapchainRecreationBlocked = false;
 
@@ -37,6 +38,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     static void xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData);
 
     bool CreateSwapchainContext(ID3D12Device* device);
+    bool AbortSwapchainInitialization(const char* stage);
     bool DestroySwapchainContext();
     bool ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy = {});
     xefg_swapchain_d3d12_resource_data_t GetResourceData(FG_ResourceType type, int index = -1);
@@ -82,6 +84,12 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     bool SwapchainReleaseInProgress() const noexcept
     {
         return _swapchainReleaseInProgress.load(std::memory_order_acquire);
+    }
+
+    bool SwapchainReleaseOwnedByCurrentThread() const noexcept
+    {
+        return _swapchainReleaseInProgress.load(std::memory_order_acquire) &&
+               _swapchainReleaseOwnerThread.load(std::memory_order_acquire) == GetCurrentThreadId();
     }
 
     XeFG_Dx12() : IFGFeature_Dx12(), IFGFeature()

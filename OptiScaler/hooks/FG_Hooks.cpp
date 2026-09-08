@@ -1271,7 +1271,7 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
         return 0;
     }
 
-    static bool skipReleaseChecks = false;
+    static thread_local bool skipReleaseChecks = false;
 
     if (skipReleaseChecks || State::Instance().currentFGSwapchain != This || State::Instance().isShuttingDown)
         return o_FGRelease(This);
@@ -1279,10 +1279,10 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
     if (State::Instance().activeFgOutput == FGOutput::XeFG && State::Instance().currentFG != nullptr)
     {
         auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG);
-        if (xefg != nullptr && xefg->SwapchainReleaseInProgress())
+        if (xefg != nullptr && xefg->SwapchainReleaseOwnedByCurrentThread())
         {
             LOG_TRACE("[XeFG][Lifecycle] action = fg_release_forwarded, "
-                      "reason = lifecycle_transaction_in_progress");
+                      "reason = same_thread_lifecycle_reentry");
             return o_FGRelease(This);
         }
     }
