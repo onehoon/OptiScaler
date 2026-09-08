@@ -277,11 +277,13 @@ class StreamlineHooks
     inline static PFN_slSetConstants_sl1 o_reflex_slSetConstants_sl1 = nullptr;
     inline static PFN_slOnPluginLoad o_reflex_slOnPluginLoad = nullptr;
     inline static decltype(&slReflexSetOptions) o_slReflexSetOptions = nullptr;
+    inline static decltype(&slReflexGetState) o_slReflexGetState = nullptr;
     inline static decltype(&slReflexSleep) o_slReflexSleep = nullptr;
 
     static bool hkreflex_slOnPluginLoad(sl::param::IParameters* params, const char* loaderJSON,
                                         const char** pluginJSON);
     static sl::Result hkslReflexSetOptions(const sl::ReflexOptions& options);
+    static sl::Result hkslReflexGetState(sl::ReflexState& state);
     static sl::Result hkslReflexSleep(const sl::FrameToken& frame);
     static bool hkreflex_slSetConstants_sl1(const void* data, uint32_t frameIndex, uint32_t id);
     static void* hkreflex_slGetPluginFunction(const char* functionName);
@@ -334,6 +336,7 @@ class StreamlineHooks
     VALIDATE_MEMBER_HOOK(hkdlssg_slGetPluginFunction, PFN_slGetPluginFunction)
     VALIDATE_MEMBER_HOOK(hkreflex_slOnPluginLoad, PFN_slOnPluginLoad)
     VALIDATE_MEMBER_HOOK(hkslReflexSetOptions, decltype(&slReflexSetOptions))
+    VALIDATE_MEMBER_HOOK(hkslReflexGetState, decltype(&slReflexGetState))
     VALIDATE_MEMBER_HOOK(hkreflex_slSetConstants_sl1, PFN_slSetConstants_sl1)
     VALIDATE_MEMBER_HOOK(hkreflex_slGetPluginFunction, PFN_slGetPluginFunction)
     VALIDATE_MEMBER_HOOK(hkpcl_slOnPluginLoad, PFN_slOnPluginLoad)
