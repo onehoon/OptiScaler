@@ -1747,7 +1747,14 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
         if (finalProxyReleased)
             return;
 
-        State::Instance().currentFGSwapchain = nullptr;
+        auto& state = State::Instance();
+        auto* finalProxy = state.currentFGSwapchain;
+        if (state.currentSwapchain == finalProxy)
+        {
+            state.currentSwapchain = nullptr;
+            LOG_DEBUG("[XeFG][Ownership] action = final_proxy_aliases_cleared, ptr = {:X}", (size_t) finalProxy);
+        }
+        state.currentFGSwapchain = nullptr;
         releaseFinalProxy();
         finalProxyReleased = true;
     };

@@ -725,26 +725,6 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
 
         const auto refCount = real != nullptr ? real->Release() : 0;
 
-        // Disabled for now, cause issues with some games
-        /*
-        IDXGISwapChain* skSC = nullptr;
-        if (_real->QueryInterface(IID_IUnwrappedDXGISwapChain, (void**) &skSC) == S_OK && skSC != nullptr)
-        {
-            skSC->Release();
-            LOG_DEBUG("Found SK swapchain, skip releasing of main swapchain");
-        }
-        else
-        {
-            // Release real swapchain, otherwise it can cause issues when re-creating swapchain with same handle
-            while (refCount > 0)
-            {
-                LOG_DEBUG("Waiting for real swapchain to be released, refCount: {}", refCount);
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                refCount = _real->Release();
-            }
-        }
-        */
-
         LOG_DEBUG("Real swapchain released, refCount: {}", refCount);
 
         delete this;

@@ -1305,6 +1305,10 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
 
     This->AddRef();
 
+    auto& state = State::Instance();
+    auto* wrappedAliasBeforeRelease = state.currentWrappedSwapchain;
+    auto* realAliasBeforeRelease = state.currentRealSwapchain;
+
     if (!Config::Instance()->FGPreserveSwapChain.value_or_default())
     {
         const auto releaseResult = o_FGRelease(This);
@@ -1355,19 +1359,22 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
             }
 
             LOG_DEBUG("FG Swapchain released, clearing currentFGSwapchain");
-            State::Instance().currentFGSwapchain = nullptr;
+            state.currentFGSwapchain = nullptr;
 
-            if (State::Instance().currentWrappedSwapchain != nullptr &&
-                State::Instance().currentSwapchainDesc.OutputWindow == _hwnd)
+            // State stores borrowed aliases. Prefer wrapper self-cleanup, but
+            // clear a stale alias from this transaction without releasing it.
+            if (state.currentWrappedSwapchain == wrappedAliasBeforeRelease && wrappedAliasBeforeRelease != nullptr)
             {
-                auto refCount = State::Instance().currentWrappedSwapchain->Release();
+                LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = wrapped_swapchain, ptr = {:X}",
+                          (size_t) wrappedAliasBeforeRelease);
+                state.currentWrappedSwapchain = nullptr;
+            }
 
-                while (refCount > 0 && refCount < 0xffffff00)
-                {
-                    refCount = State::Instance().currentWrappedSwapchain->Release();
-                }
-
-                State::Instance().currentWrappedSwapchain = nullptr;
+            if (state.currentRealSwapchain == realAliasBeforeRelease && realAliasBeforeRelease != nullptr)
+            {
+                LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = real_swapchain, ptr = {:X}",
+                          (size_t) realAliasBeforeRelease);
+                state.currentRealSwapchain = nullptr;
             }
 
             skipReleaseChecks = false;
