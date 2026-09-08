@@ -148,8 +148,22 @@ jobs:
           $title = 'OptiScaler Unsigned CI Build'
           $repo = $env:GITHUB_REPOSITORY
 
-          gh release view $tag --repo $repo *> $null
-          $releaseExists = ($LASTEXITCODE -eq 0)
+          $releaseViewOutput = & {
+            $ErrorActionPreference = 'Continue'
+            gh release view $tag --repo $repo --json tagName 2>&1
+          }
+          $releaseViewExitCode = $LASTEXITCODE
+          $releaseViewText = ($releaseViewOutput | Out-String).Trim()
+
+          if ($releaseViewExitCode -eq 0) {
+            $releaseExists = $true
+          }
+          elseif ($releaseViewText -match '(?i)release not found') {
+            $releaseExists = $false
+          }
+          else {
+            throw "Unable to determine whether release '$tag' exists (gh exit code $releaseViewExitCode): $releaseViewText"
+          }
 
           if (-not $releaseExists) {
             gh release create $tag `
