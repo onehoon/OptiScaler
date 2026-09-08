@@ -1338,12 +1338,12 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 LOG_DEBUG("FG Swapchain released, release FG & swapchain context");
                 if (auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG); xefg != nullptr)
                 {
-                    releaseSucceeded = xefg->ReleaseSwapchainFromFinalProxyRelease(
-                        _hwnd,
-                        [This]()
-                        {
-                            o_FGRelease(This);
-                        });
+                    releaseSucceeded =
+                        xefg->ReleaseSwapchainFromFinalProxyRelease(_hwnd,
+                                                                    [This]()
+                                                                    {
+                                                                        o_FGRelease(This);
+                                                                    });
                 }
                 else
                 {
