@@ -295,6 +295,10 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
+            auto& state = State::Instance();
+            auto* oldRealAlias = state.currentRealSwapchain;
+            auto* oldWrappedAlias = state.currentWrappedSwapchain;
+
             if (!ReleaseSwapchainLocked(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
@@ -302,16 +306,22 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
                 return false;
             }
 
-            // Not sure why but XeFG sometimes doesn't release the swapchain properly
-            // so we force release it here to be able to recreate swapchain for same hwnd
-            if (State::Instance().currentRealSwapchain != nullptr)
+            // State stores borrowed aliases. Clear only the aliases from this
+            // generation; never release through them or clear a newer object.
+            if (state.currentRealSwapchain == oldRealAlias)
             {
-                UINT release = 0;
-                do
-                {
-                    release = State::Instance().currentRealSwapchain->Release();
-                    LOG_DEBUG("Releasing swapchain, ref count: {}", release);
-                } while (release > 0);
+                if (oldRealAlias != nullptr)
+                    LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = real_swapchain, ptr = {:X}",
+                              (size_t) oldRealAlias);
+                state.currentRealSwapchain = nullptr;
+            }
+
+            if (state.currentWrappedSwapchain == oldWrappedAlias)
+            {
+                if (oldWrappedAlias != nullptr)
+                    LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = wrapped_swapchain, ptr = {:X}",
+                              (size_t) oldWrappedAlias);
+                state.currentWrappedSwapchain = nullptr;
             }
         }
         else
@@ -518,6 +528,10 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
+            auto& state = State::Instance();
+            auto* oldRealAlias = state.currentRealSwapchain;
+            auto* oldWrappedAlias = state.currentWrappedSwapchain;
+
             if (!ReleaseSwapchainLocked(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
@@ -525,16 +539,22 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
                 return false;
             }
 
-            // Not sure why but XeFG sometimes doesn't release the swapchain properly
-            // so we force release it here to be able to recreate swapchain for same hwnd
-            if (State::Instance().currentRealSwapchain != nullptr)
+            // State stores borrowed aliases. Clear only the aliases from this
+            // generation; never release through them or clear a newer object.
+            if (state.currentRealSwapchain == oldRealAlias)
             {
-                UINT release = 0;
-                do
-                {
-                    release = State::Instance().currentRealSwapchain->Release();
-                    LOG_DEBUG("Releasing swapchain, ref count: {}", release);
-                } while (release > 0);
+                if (oldRealAlias != nullptr)
+                    LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = real_swapchain, ptr = {:X}",
+                              (size_t) oldRealAlias);
+                state.currentRealSwapchain = nullptr;
+            }
+
+            if (state.currentWrappedSwapchain == oldWrappedAlias)
+            {
+                if (oldWrappedAlias != nullptr)
+                    LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = wrapped_swapchain, ptr = {:X}",
+                              (size_t) oldWrappedAlias);
+                state.currentWrappedSwapchain = nullptr;
             }
         }
         else
