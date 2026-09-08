@@ -16,6 +16,7 @@
 #include <d3d12.h>
 #include <misc/IdentifyGpu.h>
 #include <hooks/Xell_Hooks.h>
+#include <utility>
 
 #include <magic_enum.hpp>
 
@@ -684,15 +685,21 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
         OwnedLockGuard lock(_localMutex, 999);
 #endif
 
+        auto& state = State::Instance();
+
         MenuOverlayDx::CleanupRenderTarget(true, _handle);
 
-        if (State::Instance().currentSwapchain == this)
-            State::Instance().currentSwapchain = nullptr;
+        if (state.currentSwapchain == this)
+            state.currentSwapchain = nullptr;
 
-        if (State::Instance().currentRealSwapchain == this)
-            State::Instance().currentRealSwapchain = nullptr;
+        if (state.currentWrappedSwapchain == this)
+            state.currentWrappedSwapchain = nullptr;
 
-        auto fg = State::Instance().currentFG;
+        auto* real = std::exchange(_real, nullptr);
+        if (state.currentRealSwapchain == real)
+            state.currentRealSwapchain = nullptr;
+
+        auto fg = state.currentFG;
         bool releaseCompleted = false;
         if (fg != nullptr)
         {
@@ -714,29 +721,9 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
         }
 
         if (releaseCompleted)
-            State::Instance().currentFGSwapchain = nullptr;
+            state.currentFGSwapchain = nullptr;
 
-        auto refCount = _real->Release();
-
-        // Disabled for now, cause issues with some games
-        /*
-        IDXGISwapChain* skSC = nullptr;
-        if (_real->QueryInterface(IID_IUnwrappedDXGISwapChain, (void**) &skSC) == S_OK && skSC != nullptr)
-        {
-            skSC->Release();
-            LOG_DEBUG("Found SK swapchain, skip releasing of main swapchain");
-        }
-        else
-        {
-            // Release real swapchain, otherwise it can cause issues when re-creating swapchain with same handle
-            while (refCount > 0)
-            {
-                LOG_DEBUG("Waiting for real swapchain to be released, refCount: {}", refCount);
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                refCount = _real->Release();
-            }
-        }
-        */
+        const auto refCount = real != nullptr ? real->Release() : 0;
 
         LOG_DEBUG("Real swapchain released, refCount: {}", refCount);
 
