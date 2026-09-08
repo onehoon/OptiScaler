@@ -1700,15 +1700,40 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
 
 bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy)
 {
-    std::unique_lock lifecycleLock(_swapchainLifecycleMutex, std::try_to_lock);
-    if (!lifecycleLock.owns_lock())
+    std::unique_lock lifecycleLock(_swapchainLifecycleMutex);
+
+    if (!releaseFinalProxy)
     {
-        LOG_WARN("[XeFG][Lifecycle] action = release_swapchain_deferred, "
-                 "reason = lifecycle_transaction_in_progress");
+        LOG_ERROR("[XeFG][Lifecycle] action = release_swapchain_aborted, "
+                  "reason = missing_final_proxy_release");
         return false;
     }
 
-    return ReleaseSwapchainLocked(hwnd, std::move(releaseFinalProxy));
+    bool finalProxyReleased = false;
+    auto releaseFinalProxyOnce = [&]() {
+        if (finalProxyReleased)
+            return;
+
+        State::Instance().currentFGSwapchain = nullptr;
+        releaseFinalProxy();
+        finalProxyReleased = true;
+    };
+
+    const bool releaseSucceeded = ReleaseSwapchainLocked(hwnd, releaseFinalProxyOnce);
+
+    if (!finalProxyReleased)
+    {
+        // A confirmed final COM release cannot be deferred outside this
+        // lifecycle transaction. Consume it while the mutex is still held and
+        // quarantine recreation if teardown did not reach the callback.
+        _swapchainRecreationBlocked = true;
+        releaseFinalProxyOnce();
+        LOG_ERROR("[XeFG][Lifecycle] action = final_proxy_release_quarantined, "
+                  "reason = teardown_not_completed, hwnd = {:X}, context = {:X}",
+                  (size_t) hwnd, (size_t) _swapChainContext);
+    }
+
+    return releaseSucceeded;
 }
 
 bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy)
@@ -1754,9 +1779,9 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
 
     if (releaseFinalProxy)
     {
+        State::Instance().currentFGSwapchain = nullptr;
         releaseFinalProxy();
         // The proxy object may now be destroyed. Do not access it after this point.
-        State::Instance().currentFGSwapchain = nullptr;
     }
 
     if (!State::Instance().isShuttingDown)
