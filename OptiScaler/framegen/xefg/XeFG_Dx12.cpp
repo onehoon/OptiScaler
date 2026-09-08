@@ -1741,20 +1741,22 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
         return false;
     }
 
+    auto& state = State::Instance();
+    auto* const finalProxy = state.currentFGSwapchain;
     bool finalProxyReleased = false;
     auto releaseFinalProxyOnce = [&]()
     {
         if (finalProxyReleased)
             return;
 
-        auto& state = State::Instance();
-        auto* finalProxy = state.currentFGSwapchain;
         if (state.currentSwapchain == finalProxy)
         {
             state.currentSwapchain = nullptr;
-            LOG_DEBUG("[XeFG][Ownership] action = final_proxy_aliases_cleared, ptr = {:X}", (size_t) finalProxy);
         }
-        state.currentFGSwapchain = nullptr;
+        if (state.currentFGSwapchain == finalProxy)
+            state.currentFGSwapchain = nullptr;
+
+        LOG_DEBUG("[XeFG][Ownership] action = final_proxy_aliases_cleared, ptr = {:X}", (size_t) finalProxy);
         releaseFinalProxy();
         finalProxyReleased = true;
     };
@@ -1826,7 +1828,6 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
 
     if (releaseFinalProxy)
     {
-        State::Instance().currentFGSwapchain = nullptr;
         releaseFinalProxy();
         // The proxy object may now be destroyed. Do not access it after this point.
     }
