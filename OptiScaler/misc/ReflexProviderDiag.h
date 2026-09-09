@@ -58,9 +58,7 @@ struct LowLatencyDecisionSnapshot
 };
 
 bool IsEnabled();
-bool ShouldCaptureLowLatency(LowLatencyCaptureKey& key);
-void ObserveVendor(VendorId::Value vendorId);
-VendorId::Value GetObservedVendor();
+bool ShouldCaptureLowLatency(const LowLatencyCaptureKey& key);
 void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, const char* detail = nullptr);
 void LogLowLatencyDecision(const LowLatencyDecisionSnapshot& snapshot);
 void LogLowLatencyEarlyExit(const char* reason, const LowLatencyCaptureKey& key);
