@@ -207,11 +207,11 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
     if (ReflexProviderDiag::IsEnabled())
     {
         const auto currentTech = currently_active_tech.load();
+        const auto techMode = currentTech != nullptr ? currentTech->get_mode() : LowLatencyMode::None;
         ReflexProviderDiag::LogLowLatencyDecision(
             { vendorId, configuredMode, requestedMode, vendorMode, State::Instance().activeFgOutput, xefgForce,
-              desiredMode, activeInput, activeOutput, currentTech != nullptr,
-              currentTech != nullptr ? activeOutput : LowLatencyMode::None, pDevice != nullptr, explicitMode,
-              mode.value_or(LowLatencyMode::None) });
+              desiredMode, activeInput, activeOutput, currentTech != nullptr, techMode, pDevice != nullptr,
+              explicitMode, mode.value_or(LowLatencyMode::None) });
     }
 
     if (activeOutput == desiredMode)

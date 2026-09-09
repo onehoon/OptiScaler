@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -141,13 +142,30 @@ void LogLowLatencyDecision(const LowLatencyDecisionSnapshot& snapshot)
     if (!IsEnabled())
         return;
 
+    static std::atomic_bool saturated = false;
+    if (saturated.load(std::memory_order_relaxed))
+        return;
+
+    thread_local std::optional<LowLatencyDecisionSnapshot> lastSnapshot;
+    if (lastSnapshot.has_value() && *lastSnapshot == snapshot)
+        return;
+    lastSnapshot = snapshot;
+
     static std::mutex mutex;
     static std::unordered_set<LowLatencyDecisionSnapshot, LowLatencyDecisionHash> seen;
     {
         std::scoped_lock lock(mutex);
-        if (seen.find(snapshot) != seen.end() || seen.size() >= 16)
+        if (seen.size() >= 16)
+        {
+            saturated.store(true, std::memory_order_relaxed);
             return;
-        seen.insert(snapshot);
+        }
+
+        if (!seen.insert(snapshot).second)
+            return;
+
+        if (seen.size() >= 16)
+            saturated.store(true, std::memory_order_relaxed);
     }
 
     const auto seq = NextSequence();
