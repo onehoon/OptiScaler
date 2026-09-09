@@ -94,8 +94,8 @@ bool IsPrimaryKind(LowLatencyRecordKind kind)
     return kind == LowLatencyRecordKind::Decision || kind == LowLatencyRecordKind::Initialized;
 }
 
-bool TryCapture(CaptureBucket& bucket, const LowLatencyCaptureKey& key,
-                std::optional<LowLatencyCaptureKey>& lastKey, size_t limit)
+bool TryCapture(CaptureBucket& bucket, const LowLatencyCaptureKey& key, std::optional<LowLatencyCaptureKey>& lastKey,
+                size_t limit)
 {
     if (lastKey.has_value() && *lastKey == key)
         return false;
@@ -145,11 +145,6 @@ uint64_t NextSequence() { return sequence.fetch_add(1, std::memory_order_relaxed
 
 bool IsEnabled()
 {
-    // Once both LL buckets are full, all LL call sites become two relaxed atomic reads and return immediately.
-    if (primaryBucket.saturated.load(std::memory_order_relaxed) &&
-        auxiliaryBucket.saturated.load(std::memory_order_relaxed))
-        return false;
-
     static std::atomic<int8_t> cachedScope { -1 };
 
     const auto cached = cachedScope.load(std::memory_order_relaxed);
