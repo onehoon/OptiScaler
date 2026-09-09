@@ -180,9 +180,24 @@ jobs:
           else {
             gh release edit $tag `
               --repo $repo `
+              --target $env:RESOLVED_SHA `
               --title $title `
               --notes-file $env:RELEASE_NOTES `
               --prerelease
           }
+
+          $tagRef = "repos/$repo/git/refs/tags/$tag"
+          gh api --method PATCH $tagRef `
+            -f "sha=$env:RESOLVED_SHA" `
+            -F force=true | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to move tag '$tag' to $env:RESOLVED_SHA"
+          }
+
+          $tagSha = (gh api $tagRef --jq '.object.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $tagSha -ne $env:RESOLVED_SHA) {
+            throw "Tag '$tag' does not resolve to the built commit. Expected $env:RESOLVED_SHA, got $tagSha"
+          }
+          Write-Host "Tag '$tag' now resolves to $tagSha"
 
           gh release upload $tag $env:OPTI_ZIP $env:DXGI_ZIP --repo $repo --clobber
