@@ -1380,7 +1380,8 @@ sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
 {
     const auto result = o_slReflexGetState(state);
     const bool originalLowLatencyAvailable = state.lowLatencyAvailable;
-    const bool quirkEnabled = static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
+    const bool quirkEnabled =
+        static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
     const bool streamlineSpoofing = Config::Instance()->StreamlineSpoofing.value_or_default();
     const bool fakeNvapiIsMain = fakenvapi::isUsingAsMainNvapi();
 
