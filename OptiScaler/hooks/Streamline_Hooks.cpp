@@ -8,6 +8,7 @@
 #include <nvapi/fakenvapi.h>
 #include <misc/IdentifyGpu.h>
 #include <hooks/Reflex_Hooks.h>
+#include <misc/ReflexProviderDiag.h>
 #include <menu/menu_overlay_base.h>
 #include <framegen/nvngx/Nvngx_FG.h>
 #include <proxies/KernelBase_Proxy.h>
@@ -17,6 +18,8 @@
 #include <sl1_reflex.h>
 #include <magic_enum.hpp>
 #include "detours/detours.h"
+
+#pragma intrinsic(_ReturnAddress)
 
 static bool IsSL1AndDLSSGActive()
 {
@@ -270,7 +273,11 @@ sl::Result StreamlineHooks::hkslIsFeatureSupported(sl::Feature feature, const sl
     if (feature == sl::kFeatureDLSS_G)
         return sl::Result::eOk;
 
-    return o_slIsFeatureSupported(feature, adapterInfo);
+    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto result = o_slIsFeatureSupported(feature, adapterInfo);
+    if (feature == sl::kFeatureReflex)
+        ReflexProviderDiag::LogStreamlineOnce("slIsFeatureSupported", returnAddress, result);
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslIsFeatureLoaded(sl::Feature feature, bool& loaded)
@@ -281,7 +288,11 @@ sl::Result StreamlineHooks::hkslIsFeatureLoaded(sl::Feature feature, bool& loade
         return sl::Result::eOk;
     }
 
-    return o_slIsFeatureLoaded(feature, loaded);
+    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto result = o_slIsFeatureLoaded(feature, loaded);
+    if (feature == sl::kFeatureReflex)
+        ReflexProviderDiag::LogStreamlineOnce("slIsFeatureLoaded", returnAddress, result);
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslGetFeatureRequirements(sl::Feature feature, sl::FeatureRequirements& requirements)
@@ -289,7 +300,11 @@ sl::Result StreamlineHooks::hkslGetFeatureRequirements(sl::Feature feature, sl::
     if (feature == sl::kFeatureDLSS_G)
         return sl::Result::eOk;
 
-    return o_slGetFeatureRequirements(feature, requirements);
+    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto result = o_slGetFeatureRequirements(feature, requirements);
+    if (feature == sl::kFeatureReflex)
+        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureRequirements", returnAddress, result);
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::FeatureVersion& version)
@@ -303,7 +318,11 @@ sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::Featu
         return sl::Result::eOk;
     }
 
-    return o_slGetFeatureVersion(feature, version);
+    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto result = o_slGetFeatureVersion(feature, version);
+    if (feature == sl::kFeatureReflex)
+        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureVersion", returnAddress, result);
+    return result;
 }
 
 static sl::Result dummy_slDLSSGGetState(const sl::ViewportHandle& viewport, sl::DLSSGState& state,
@@ -341,7 +360,11 @@ sl::Result StreamlineHooks::hkslGetFeatureFunction(sl::Feature feature, const ch
         }
     }
 
-    return o_slGetFeatureFunction(feature, functionName, function);
+    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto result = o_slGetFeatureFunction(feature, functionName, function);
+    if (feature == sl::kFeatureReflex)
+        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureFunction", returnAddress, result, functionName);
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const sl::ResourceTag* tags,
@@ -1357,7 +1380,8 @@ sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
 {
     const auto result = o_slReflexGetState(state);
     const bool originalLowLatencyAvailable = state.lowLatencyAvailable;
-    const bool quirkEnabled = static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
+    const bool quirkEnabled =
+        static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
     const bool streamlineSpoofing = Config::Instance()->StreamlineSpoofing.value_or_default();
     const bool fakeNvapiIsMain = fakenvapi::isUsingAsMainNvapi();
 
