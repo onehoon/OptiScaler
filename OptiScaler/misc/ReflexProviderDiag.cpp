@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <string_view>
 #include <unordered_set>
 
@@ -18,9 +19,9 @@ std::atomic_uint64_t sequence = 0;
 
 struct StreamlineKey
 {
-    uintptr_t returnAddress;
-    std::string_view api;
-    std::string_view detail;
+    uintptr_t returnAddress = 0;
+    std::string api;
+    std::string detail;
 
     bool operator==(const StreamlineKey&) const = default;
 };
@@ -30,8 +31,8 @@ struct StreamlineKeyHash
     size_t operator()(const StreamlineKey& key) const noexcept
     {
         const auto addressHash = std::hash<uintptr_t> {}(key.returnAddress);
-        const auto apiHash = std::hash<std::string_view> {}(key.api);
-        const auto detailHash = std::hash<std::string_view> {}(key.detail);
+        const auto apiHash = std::hash<std::string> {}(key.api);
+        const auto detailHash = std::hash<std::string> {}(key.detail);
         return addressHash ^ (apiHash << 1) ^ (detailHash << 2);
     }
 };
@@ -112,7 +113,7 @@ void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, 
     static std::mutex mutex;
     static std::unordered_set<StreamlineKey, StreamlineKeyHash> seen;
 
-    const StreamlineKey key { reinterpret_cast<uintptr_t>(returnAddress), api, detailView };
+    const StreamlineKey key { reinterpret_cast<uintptr_t>(returnAddress), std::string(api), std::string(detailView) };
     {
         std::scoped_lock lock(mutex);
         if (seen.find(key) != seen.end() || seen.size() >= 32)

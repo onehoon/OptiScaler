@@ -196,10 +196,6 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
         else
             desiredMode = LowLatencyMode::LatencyFlex;
     }
-    else if (ReflexProviderDiag::IsEnabled())
-    {
-        vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
-    }
 
     const auto vendorMode = desiredMode;
     const bool xefgForce = State::Instance().activeFgOutput == FGOutput::XeFG;
