@@ -117,6 +117,10 @@ jobs:
           $buildTimestamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
           $releaseNotes = Join-Path $artifactRoot 'release-notes.md'
           @"
+          [Try to use custom REF with this custom OptiScaler](https://github.com/onehoon/REFramework/releases/latest)
+
+          ### Only for Capcom games
+
           Unsigned CI build
 
           Requested ref: $env:REQUESTED_REF
