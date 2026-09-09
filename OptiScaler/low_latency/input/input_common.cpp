@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include <misc/IdentifyGpu.h>
+#include <misc/ReflexProviderDiag.h>
 
 #include "input_common.h"
 #include <low_latency/low_latency_tech/ll_xell.h>
@@ -97,6 +98,9 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
     }
 
     LowLatencyMode desiredMode = LowLatencyMode::None;
+    const auto configuredMode = Config::Instance()->LowLatencyOutput.value_or_default();
+    const bool explicitMode = mode.has_value();
+    const auto requestedMode = mode.value_or(configuredMode);
     LowLatencyInput desiredInput = Config::Instance()->LowLatencyInput.value_or_default();
 
     if (!pDevice)
@@ -175,12 +179,13 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
     }
 
     if (desiredMode == LowLatencyMode::None)
-        desiredMode = Config::Instance()->LowLatencyOutput.value_or_default();
+        desiredMode = configuredMode;
 
     // TODO: add avaliableOutput, somehow ?
+    VendorId::Value vendorId = VendorId::Invalid;
     if (desiredMode == LowLatencyMode::Auto)
     {
-        auto vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
+        vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
 
         if (vendorId == VendorId::Intel)
             desiredMode = LowLatencyMode::XeLL;
@@ -191,10 +196,27 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
         else
             desiredMode = LowLatencyMode::LatencyFlex;
     }
+    else if (ReflexProviderDiag::IsEnabled())
+    {
+        vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
+    }
+
+    const auto vendorMode = desiredMode;
+    const bool xefgForce = State::Instance().activeFgOutput == FGOutput::XeFG;
 
     // Force XeLL when using XeFG
-    if (State::Instance().activeFgOutput == FGOutput::XeFG)
+    if (xefgForce)
         desiredMode = LowLatencyMode::XeLL;
+
+    if (ReflexProviderDiag::IsEnabled())
+    {
+        const auto currentTech = currently_active_tech.load();
+        ReflexProviderDiag::LogLowLatencyDecision(
+            { vendorId, configuredMode, requestedMode, vendorMode, State::Instance().activeFgOutput, xefgForce,
+              desiredMode, activeInput, activeOutput, currentTech != nullptr,
+              currentTech != nullptr ? activeOutput : LowLatencyMode::None, pDevice != nullptr, explicitMode,
+              mode.value_or(LowLatencyMode::None) });
+    }
 
     if (activeOutput == desiredMode)
     {
