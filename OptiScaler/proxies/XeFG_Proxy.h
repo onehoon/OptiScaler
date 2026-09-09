@@ -11,6 +11,7 @@
 #include <xefg_swapchain.h>
 #include <xefg_swapchain_d3d12.h>
 #include <xefg_swapchain_debug.h>
+#include <magic_enum.hpp>
 
 #pragma comment(lib, "Version.lib")
 
@@ -262,13 +263,21 @@ class XeFGProxy
     {
         if (_xefgVersion.major == 0 && _xefgSwapChainGetVersion != nullptr)
         {
-            if (auto result = _xefgSwapChainGetVersion(&_xefgVersion); static_cast<int32_t>(result) >= 0)
+            xefg_swapchain_version_t version {};
+            auto result = _xefgSwapChainGetVersion(&version);
+
+            if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {
+                _xefgVersion = version;
                 LOG_INFO("XeFG Version: v{}.{}.{}", _xefgVersion.major, _xefgVersion.minor, _xefgVersion.patch);
             }
             else
             {
-                LOG_ERROR("Can't get XeFG version: {}", (UINT) result);
+                const auto value = static_cast<int32_t>(result);
+                if (value > 0)
+                    LOG_WARN("XeFG version warning: {} ({})", magic_enum::enum_name(result), value);
+                else
+                    LOG_ERROR("XeFG version error: {} ({})", magic_enum::enum_name(result), value);
             }
         }
 
