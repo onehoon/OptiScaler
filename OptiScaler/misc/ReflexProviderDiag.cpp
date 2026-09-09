@@ -38,28 +38,27 @@ struct StreamlineKeyHash
     }
 };
 
-struct LowLatencyDecisionHash
+struct LowLatencyCaptureHash
 {
-    size_t operator()(const LowLatencyDecisionSnapshot& snapshot) const noexcept
+    size_t operator()(const LowLatencyCaptureKey& key) const noexcept
     {
         size_t hash = 0;
         const auto combine = [&hash](uint32_t value)
         { hash ^= std::hash<uint32_t> {}(value) + static_cast<size_t>(0x9E3779B9) + (hash << 6) + (hash >> 2); };
 
-        combine(static_cast<uint32_t>(snapshot.vendorId));
-        combine(static_cast<uint32_t>(snapshot.configuredMode));
-        combine(static_cast<uint32_t>(snapshot.requestedMode));
-        combine(static_cast<uint32_t>(snapshot.vendorMode));
-        combine(static_cast<uint32_t>(snapshot.fgOutput));
-        combine(snapshot.xefgForce ? 1u : 0u);
-        combine(static_cast<uint32_t>(snapshot.finalMode));
-        combine(static_cast<uint32_t>(snapshot.activeInput));
-        combine(static_cast<uint32_t>(snapshot.activeOutput));
-        combine(snapshot.techPresent ? 1u : 0u);
-        combine(static_cast<uint32_t>(snapshot.techMode));
-        combine(snapshot.devicePresent ? 1u : 0u);
-        combine(snapshot.explicitMode ? 1u : 0u);
-        combine(static_cast<uint32_t>(snapshot.explicitModeValue));
+        combine(static_cast<uint32_t>(key.kind));
+        combine(static_cast<uint32_t>(key.vendorId));
+        combine(static_cast<uint32_t>(key.configuredMode));
+        combine(static_cast<uint32_t>(key.requestedMode));
+        combine(static_cast<uint32_t>(key.vendorMode));
+        combine(static_cast<uint32_t>(key.fgOutput));
+        combine(key.xefgForce ? 1u : 0u);
+        combine(static_cast<uint32_t>(key.finalMode));
+        combine(static_cast<uint32_t>(key.activeInput));
+        combine(static_cast<uint32_t>(key.activeOutput));
+        combine(key.devicePresent ? 1u : 0u);
+        combine(key.explicitMode ? 1u : 0u);
+        combine(static_cast<uint32_t>(key.explicitModeValue));
         return hash;
     }
 };
@@ -105,6 +104,34 @@ uint64_t NextSequence() { return sequence.fetch_add(1, std::memory_order_relaxed
 
 bool IsEnabled() { return IsSupportedExecutable(State::Instance().gameExe); }
 
+bool ShouldCaptureLowLatency(const LowLatencyCaptureKey& key)
+{
+    static std::atomic_bool saturated = false;
+    if (saturated.load(std::memory_order_relaxed))
+        return false;
+
+    thread_local std::optional<LowLatencyCaptureKey> lastKey;
+    if (lastKey.has_value() && *lastKey == key)
+        return false;
+    lastKey = key;
+
+    static std::mutex mutex;
+    static std::unordered_set<LowLatencyCaptureKey, LowLatencyCaptureHash> seen;
+    std::scoped_lock lock(mutex);
+    if (seen.size() >= 16)
+    {
+        saturated.store(true, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (!seen.insert(key).second)
+        return false;
+
+    if (seen.size() >= 16)
+        saturated.store(true, std::memory_order_relaxed);
+    return true;
+}
+
 void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, const char* detail)
 {
     if (!IsEnabled() || api == nullptr)
@@ -139,35 +166,6 @@ void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, 
 
 void LogLowLatencyDecision(const LowLatencyDecisionSnapshot& snapshot)
 {
-    if (!IsEnabled())
-        return;
-
-    static std::atomic_bool saturated = false;
-    if (saturated.load(std::memory_order_relaxed))
-        return;
-
-    thread_local std::optional<LowLatencyDecisionSnapshot> lastSnapshot;
-    if (lastSnapshot.has_value() && *lastSnapshot == snapshot)
-        return;
-    lastSnapshot = snapshot;
-
-    static std::mutex mutex;
-    static std::unordered_set<LowLatencyDecisionSnapshot, LowLatencyDecisionHash> seen;
-    {
-        std::scoped_lock lock(mutex);
-        if (seen.size() >= 16)
-        {
-            saturated.store(true, std::memory_order_relaxed);
-            return;
-        }
-
-        if (!seen.insert(snapshot).second)
-            return;
-
-        if (seen.size() >= 16)
-            saturated.store(true, std::memory_order_relaxed);
-    }
-
     const auto seq = NextSequence();
     LOG_INFO("[ReflexProviderGate] seq={} area=LL phase=decision vendor={} configured={} requested={} vendorMode={} "
              "fgOutput={} xefgForce={} finalMode={} activeInput={} activeOutput={} techPresent={} techMode={} "
@@ -178,5 +176,39 @@ void LogLowLatencyDecision(const LowLatencyDecisionSnapshot& snapshot)
              magic_enum::enum_name(snapshot.activeInput), magic_enum::enum_name(snapshot.activeOutput),
              snapshot.techPresent, magic_enum::enum_name(snapshot.techMode), snapshot.devicePresent,
              snapshot.explicitMode, magic_enum::enum_name(snapshot.explicitModeValue));
+}
+
+void LogLowLatencyEarlyExit(const char* reason, const LowLatencyCaptureKey& key)
+{
+    const auto seq = NextSequence();
+    LOG_INFO("[ReflexProviderGate] seq={} area=LL phase=early-exit reason={} vendor={} configured={} requested={} "
+             "vendorMode={} fgOutput={} xefgForce={} finalMode={} activeInput={} activeOutput={} "
+             "devicePresent={} explicitMode={} explicitValue={} techMode=not-captured",
+             seq, reason, magic_enum::enum_name(key.vendorId), magic_enum::enum_name(key.configuredMode),
+             magic_enum::enum_name(key.requestedMode), magic_enum::enum_name(key.vendorMode),
+             magic_enum::enum_name(key.fgOutput), key.xefgForce, magic_enum::enum_name(key.finalMode),
+             magic_enum::enum_name(key.activeInput), magic_enum::enum_name(key.activeOutput), key.devicePresent,
+             key.explicitMode, magic_enum::enum_name(key.explicitModeValue));
+}
+
+void LogLowLatencyInputTransition(const LowLatencyCaptureKey& key, LowLatencyMode techMode)
+{
+    const auto seq = NextSequence();
+    LOG_INFO("[ReflexProviderGate] seq={} area=LL phase=input-change-existing-tech vendor={} configured={} "
+             "requested={} activeInput={} activeOutput={} techPresent=true techMode={} devicePresent={} "
+             "explicitMode={} explicitValue={}",
+             seq, magic_enum::enum_name(key.vendorId), magic_enum::enum_name(key.configuredMode),
+             magic_enum::enum_name(key.requestedMode), magic_enum::enum_name(key.activeInput),
+             magic_enum::enum_name(key.activeOutput), magic_enum::enum_name(techMode), key.devicePresent,
+             key.explicitMode, magic_enum::enum_name(key.explicitModeValue));
+}
+
+void LogLowLatencyInitialized(const LowLatencyCaptureKey& key, LowLatencyMode techMode)
+{
+    const auto seq = NextSequence();
+    LOG_INFO("[ReflexProviderGate] seq={} area=LL phase=initialized mode={} activeInput={} activeOutput={} "
+             "techPresent=true techMode={} devicePresent={}",
+             seq, magic_enum::enum_name(techMode), magic_enum::enum_name(key.activeInput),
+             magic_enum::enum_name(key.activeOutput), magic_enum::enum_name(techMode), key.devicePresent);
 }
 } // namespace ReflexProviderDiag
