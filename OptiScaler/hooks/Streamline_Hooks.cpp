@@ -281,7 +281,7 @@ sl::Result StreamlineHooks::hkslIsFeatureSupported(sl::Feature feature, const sl
     const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slIsFeatureSupported(feature, adapterInfo);
     if (IsReflexOrPclFeature(feature))
-        ReflexProviderDiag::LogStreamlineOnce("slIsFeatureSupported", returnAddress, result);
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slIsFeatureSupported", returnAddress, result);
     return result;
 }
 
@@ -296,7 +296,7 @@ sl::Result StreamlineHooks::hkslIsFeatureLoaded(sl::Feature feature, bool& loade
     const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slIsFeatureLoaded(feature, loaded);
     if (IsReflexOrPclFeature(feature))
-        ReflexProviderDiag::LogStreamlineOnce("slIsFeatureLoaded", returnAddress, result);
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slIsFeatureLoaded", returnAddress, result);
     return result;
 }
 
@@ -308,7 +308,7 @@ sl::Result StreamlineHooks::hkslGetFeatureRequirements(sl::Feature feature, sl::
     const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slGetFeatureRequirements(feature, requirements);
     if (IsReflexOrPclFeature(feature))
-        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureRequirements", returnAddress, result);
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureRequirements", returnAddress, result);
     return result;
 }
 
@@ -326,7 +326,7 @@ sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::Featu
     const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slGetFeatureVersion(feature, version);
     if (IsReflexOrPclFeature(feature))
-        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureVersion", returnAddress, result);
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureVersion", returnAddress, result);
     return result;
 }
 
@@ -368,7 +368,7 @@ sl::Result StreamlineHooks::hkslGetFeatureFunction(sl::Feature feature, const ch
     const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slGetFeatureFunction(feature, functionName, function);
     if (IsReflexOrPclFeature(feature))
-        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureFunction", returnAddress, result, functionName);
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureFunction", returnAddress, result, functionName);
     return result;
 }
 
