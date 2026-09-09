@@ -484,6 +484,7 @@ class Config
     CustomOptional<bool, SoftDefault> DxgiSpoofing { true };
     CustomOptional<bool> DxgiFactoryWrapping { false };
     CustomOptional<bool> StreamlineSpoofing { true };
+    CustomOptional<std::string> ReflexDxgiIdentityScope { "Off" };
     CustomOptional<std::string, NoDefault> DxgiBlacklist; // disabled by default
     CustomOptional<int, NoDefault> DxgiVRAM;              // disabled by default
     CustomOptional<bool> VulkanSpoofing { false };

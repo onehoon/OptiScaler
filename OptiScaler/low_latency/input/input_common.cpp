@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include <misc/IdentifyGpu.h>
+#include <misc/ReflexProviderDiag.h>
 
 #include "input_common.h"
 #include <low_latency/low_latency_tech/ll_xell.h>
@@ -76,6 +77,26 @@ bool InputCommon::init_tech(IUnknown* pDevice, LowLatencyMode desiredMode)
         if (auto current_tech = currently_active_tech.load(); current_tech && isInitialized)
         {
             activeOutput = current_tech->get_mode();
+            if (ReflexProviderDiag::IsEnabled())
+            {
+                const ReflexProviderDiag::LowLatencyCaptureKey key {
+                    ReflexProviderDiag::LowLatencyRecordKind::Initialized,
+                    VendorId::Invalid,
+                    activeOutput,
+                    activeOutput,
+                    activeOutput,
+                    State::Instance().activeFgOutput,
+                    State::Instance().activeFgOutput == FGOutput::XeFG,
+                    activeOutput,
+                    activeInput,
+                    activeOutput,
+                    pDevice != nullptr,
+                    false,
+                    LowLatencyMode::None,
+                };
+                if (ReflexProviderDiag::ShouldCaptureLowLatency(key))
+                    ReflexProviderDiag::LogLowLatencyInitialized(key, activeOutput);
+            }
             current_tech->set_sleep_mode(&get_sleep_copy(activeInput)); // Restore any potential sleep mode
             return true;
         }
@@ -97,10 +118,40 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
     }
 
     LowLatencyMode desiredMode = LowLatencyMode::None;
+    const auto configuredMode = Config::Instance()->LowLatencyOutput.value_or_default();
+    const bool explicitMode = mode.has_value();
+    const auto requestedMode = mode.value_or(configuredMode);
     LowLatencyInput desiredInput = Config::Instance()->LowLatencyInput.value_or_default();
 
     if (!pDevice)
     {
+        if (ReflexProviderDiag::IsEnabled())
+        {
+            const auto nullDeviceMode = mode.value_or(LowLatencyMode::None);
+            const ReflexProviderDiag::LowLatencyCaptureKey key {
+                ReflexProviderDiag::LowLatencyRecordKind::NullDevice,
+                VendorId::Invalid,
+                configuredMode,
+                requestedMode,
+                nullDeviceMode,
+                State::Instance().activeFgOutput,
+                State::Instance().activeFgOutput == FGOutput::XeFG,
+                nullDeviceMode,
+                activeInput,
+                activeOutput,
+                false,
+                explicitMode,
+                nullDeviceMode,
+            };
+            if (ReflexProviderDiag::ShouldCaptureLowLatency(key))
+            {
+                ReflexProviderDiag::LogLowLatencyEarlyExit(activeOutput != LowLatencyMode::None && !explicitMode
+                                                               ? "null-device-existing-output"
+                                                               : "null-device-rejected",
+                                                           key);
+            }
+        }
+
         // Some outputs might call sleep with nullptr
         if (activeOutput != LowLatencyMode::None && !mode.has_value())
             return true; // Allow it if we already have an output and not trying to set manually
@@ -113,6 +164,27 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
 
     if (desiredMode != LowLatencyMode::None && desiredMode == activeOutput)
     {
+        if (ReflexProviderDiag::IsEnabled())
+        {
+            const ReflexProviderDiag::LowLatencyCaptureKey key {
+                ReflexProviderDiag::LowLatencyRecordKind::ModeAlreadyActive,
+                VendorId::Invalid,
+                configuredMode,
+                requestedMode,
+                desiredMode,
+                State::Instance().activeFgOutput,
+                State::Instance().activeFgOutput == FGOutput::XeFG,
+                desiredMode,
+                activeInput,
+                activeOutput,
+                true,
+                explicitMode,
+                mode.value_or(LowLatencyMode::None),
+            };
+            if (ReflexProviderDiag::ShouldCaptureLowLatency(key))
+                ReflexProviderDiag::LogLowLatencyEarlyExit("mode-already-active", key);
+        }
+
         // No need to do anything
         return true;
     }
@@ -168,6 +240,27 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
 
             if (auto current_tech = currently_active_tech.load())
             {
+                if (ReflexProviderDiag::IsEnabled())
+                {
+                    const ReflexProviderDiag::LowLatencyCaptureKey key {
+                        ReflexProviderDiag::LowLatencyRecordKind::InputChangeExistingTech,
+                        VendorId::Invalid,
+                        configuredMode,
+                        requestedMode,
+                        LowLatencyMode::None,
+                        State::Instance().activeFgOutput,
+                        State::Instance().activeFgOutput == FGOutput::XeFG,
+                        LowLatencyMode::None,
+                        activeInput,
+                        activeOutput,
+                        pDevice != nullptr,
+                        explicitMode,
+                        mode.value_or(LowLatencyMode::None),
+                    };
+                    if (ReflexProviderDiag::ShouldCaptureLowLatency(key))
+                        ReflexProviderDiag::LogLowLatencyInputTransition(key, current_tech->get_mode());
+                }
+
                 current_tech->set_sleep_mode(&get_sleep_copy(activeInput)); // Restore any potential sleep mode
                 return true;
             }
@@ -175,12 +268,13 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
     }
 
     if (desiredMode == LowLatencyMode::None)
-        desiredMode = Config::Instance()->LowLatencyOutput.value_or_default();
+        desiredMode = configuredMode;
 
     // TODO: add avaliableOutput, somehow ?
+    VendorId::Value vendorId = VendorId::Invalid;
     if (desiredMode == LowLatencyMode::Auto)
     {
-        auto vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
+        vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
 
         if (vendorId == VendorId::Intel)
             desiredMode = LowLatencyMode::XeLL;
@@ -192,9 +286,40 @@ bool InputCommon::update_low_latency_tech(IUnknown* pDevice, std::optional<LowLa
             desiredMode = LowLatencyMode::LatencyFlex;
     }
 
+    const auto vendorMode = desiredMode;
+    const bool xefgForce = State::Instance().activeFgOutput == FGOutput::XeFG;
+
     // Force XeLL when using XeFG
-    if (State::Instance().activeFgOutput == FGOutput::XeFG)
+    if (xefgForce)
         desiredMode = LowLatencyMode::XeLL;
+
+    if (ReflexProviderDiag::IsEnabled())
+    {
+        const ReflexProviderDiag::LowLatencyCaptureKey key {
+            ReflexProviderDiag::LowLatencyRecordKind::Decision,
+            vendorId,
+            configuredMode,
+            requestedMode,
+            vendorMode,
+            State::Instance().activeFgOutput,
+            xefgForce,
+            desiredMode,
+            activeInput,
+            activeOutput,
+            pDevice != nullptr,
+            explicitMode,
+            mode.value_or(LowLatencyMode::None),
+        };
+        if (ReflexProviderDiag::ShouldCaptureLowLatency(key))
+        {
+            const auto currentTech = currently_active_tech.load();
+            const auto techMode = currentTech != nullptr ? currentTech->get_mode() : LowLatencyMode::None;
+            ReflexProviderDiag::LogLowLatencyDecision(
+                { vendorId, configuredMode, requestedMode, vendorMode, State::Instance().activeFgOutput, xefgForce,
+                  desiredMode, activeInput, activeOutput, currentTech != nullptr, techMode, pDevice != nullptr,
+                  explicitMode, mode.value_or(LowLatencyMode::None) });
+        }
+    }
 
     if (activeOutput == desiredMode)
     {

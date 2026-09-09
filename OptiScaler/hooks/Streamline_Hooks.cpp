@@ -8,6 +8,7 @@
 #include <nvapi/fakenvapi.h>
 #include <misc/IdentifyGpu.h>
 #include <hooks/Reflex_Hooks.h>
+#include <misc/ReflexProviderDiag.h>
 #include <menu/menu_overlay_base.h>
 #include <framegen/nvngx/Nvngx_FG.h>
 #include <proxies/KernelBase_Proxy.h>
@@ -17,6 +18,8 @@
 #include <sl1_reflex.h>
 #include <magic_enum.hpp>
 #include "detours/detours.h"
+
+#pragma intrinsic(_ReturnAddress)
 
 static bool IsSL1AndDLSSGActive()
 {
@@ -29,6 +32,11 @@ static bool IsSL1AndFGActive()
     const auto& state = State::Instance();
 
     return state.streamlineVersion.major == 1 && state.activeFgInput == FGInput::DLSSG;
+}
+
+static bool IsReflexOrPclFeature(sl::Feature feature)
+{
+    return feature == sl::kFeatureReflex || feature == sl::kFeaturePCL;
 }
 
 static void PatchSL1PluginJson(nlohmann::json& configJson)
@@ -270,7 +278,11 @@ sl::Result StreamlineHooks::hkslIsFeatureSupported(sl::Feature feature, const sl
     if (feature == sl::kFeatureDLSS_G)
         return sl::Result::eOk;
 
-    return o_slIsFeatureSupported(feature, adapterInfo);
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
+    const auto result = o_slIsFeatureSupported(feature, adapterInfo);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slIsFeatureSupported", returnAddress, result);
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslIsFeatureLoaded(sl::Feature feature, bool& loaded)
@@ -281,7 +293,11 @@ sl::Result StreamlineHooks::hkslIsFeatureLoaded(sl::Feature feature, bool& loade
         return sl::Result::eOk;
     }
 
-    return o_slIsFeatureLoaded(feature, loaded);
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
+    const auto result = o_slIsFeatureLoaded(feature, loaded);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slIsFeatureLoaded", returnAddress, result);
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslGetFeatureRequirements(sl::Feature feature, sl::FeatureRequirements& requirements)
@@ -289,7 +305,11 @@ sl::Result StreamlineHooks::hkslGetFeatureRequirements(sl::Feature feature, sl::
     if (feature == sl::kFeatureDLSS_G)
         return sl::Result::eOk;
 
-    return o_slGetFeatureRequirements(feature, requirements);
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
+    const auto result = o_slGetFeatureRequirements(feature, requirements);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureRequirements", returnAddress, result);
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::FeatureVersion& version)
@@ -303,7 +323,11 @@ sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::Featu
         return sl::Result::eOk;
     }
 
-    return o_slGetFeatureVersion(feature, version);
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
+    const auto result = o_slGetFeatureVersion(feature, version);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureVersion", returnAddress, result);
+    return result;
 }
 
 static sl::Result dummy_slDLSSGGetState(const sl::ViewportHandle& viewport, sl::DLSSGState& state,
@@ -341,7 +365,11 @@ sl::Result StreamlineHooks::hkslGetFeatureFunction(sl::Feature feature, const ch
         }
     }
 
-    return o_slGetFeatureFunction(feature, functionName, function);
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
+    const auto result = o_slGetFeatureFunction(feature, functionName, function);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureFunction", returnAddress, result, functionName);
+    return result;
 }
 
 sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const sl::ResourceTag* tags,
@@ -1353,6 +1381,53 @@ sl::Result StreamlineHooks::hkslReflexSetOptions(const sl::ReflexOptions& option
     return o_slReflexSetOptions(newOptions);
 }
 
+sl::Result StreamlineHooks::hkslReflexGetState(sl::ReflexState& state)
+{
+    const auto result = o_slReflexGetState(state);
+    const bool originalLowLatencyAvailable = state.lowLatencyAvailable;
+    const bool quirkEnabled =
+        static_cast<bool>(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel);
+    const bool streamlineSpoofing = Config::Instance()->StreamlineSpoofing.value_or_default();
+    const bool fakeNvapiIsMain = fakenvapi::isUsingAsMainNvapi();
+
+    VendorId::Value vendorId = VendorId::Invalid;
+
+    if (result == sl::Result::eOk && quirkEnabled && streamlineSpoofing && fakeNvapiIsMain)
+        vendorId = IdentifyGpu::getPrimaryGpu().vendorId;
+
+    static bool hasLogged = false;
+    static uint32_t lastResult = 0;
+    static VendorId::Value lastVendorId = VendorId::Invalid;
+    static bool lastOriginalLowLatencyAvailable = false;
+    static bool lastReturnedLowLatencyAvailable = false;
+    static bool lastQuirkEnabled = false;
+    static bool lastStreamlineSpoofing = false;
+    static bool lastFakeNvapiIsMain = false;
+
+    const auto resultValue = static_cast<uint32_t>(result);
+    if (!hasLogged || lastResult != resultValue || lastVendorId != vendorId ||
+        lastOriginalLowLatencyAvailable != originalLowLatencyAvailable ||
+        lastReturnedLowLatencyAvailable != state.lowLatencyAvailable || lastQuirkEnabled != quirkEnabled ||
+        lastStreamlineSpoofing != streamlineSpoofing || lastFakeNvapiIsMain != fakeNvapiIsMain)
+    {
+        LOG_INFO("Reflex GetState: result={}, vendor={}, original lowLatencyAvailable={}, returned={}, quirk={}, "
+                 "streamlineSpoofing={}, fakeNvapiMain={}",
+                 magic_enum::enum_name(result), magic_enum::enum_name(vendorId), originalLowLatencyAvailable,
+                 state.lowLatencyAvailable, quirkEnabled, streamlineSpoofing, fakeNvapiIsMain);
+
+        hasLogged = true;
+        lastResult = resultValue;
+        lastVendorId = vendorId;
+        lastOriginalLowLatencyAvailable = originalLowLatencyAvailable;
+        lastReturnedLowLatencyAvailable = state.lowLatencyAvailable;
+        lastQuirkEnabled = quirkEnabled;
+        lastStreamlineSpoofing = streamlineSpoofing;
+        lastFakeNvapiIsMain = fakeNvapiIsMain;
+    }
+
+    return result;
+}
+
 sl::Result StreamlineHooks::hkslReflexSleep(const sl::FrameToken& frame)
 {
     // if (State::Instance().activeFgOutput == FGOutput::DLSSG && StreamlineProxy::IsD3D12Inited() &&
@@ -1499,6 +1574,17 @@ void* StreamlineHooks::hkreflex_slGetPluginFunction(const char* functionName)
     {
         o_slReflexSetOptions = (decltype(&slReflexSetOptions)) o_reflex_slGetPluginFunction(functionName);
         return &hkslReflexSetOptions;
+    }
+
+    if (strcmp(functionName, "slReflexGetState") == 0 &&
+        State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel)
+    {
+        o_slReflexGetState = (decltype(&slReflexGetState)) o_reflex_slGetPluginFunction(functionName);
+
+        if (o_slReflexGetState != nullptr)
+            return &hkslReflexGetState;
+
+        return nullptr;
     }
 
     if (strcmp(functionName, "slReflexSleep") == 0)
