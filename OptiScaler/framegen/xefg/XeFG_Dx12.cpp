@@ -211,17 +211,18 @@ bool XeFG_Dx12::DestroySwapchainContext()
 
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
-        _swapChainContext = context;
         _swapchainRecreationBlocked = true;
 
         if (IsXeFGWarning(result))
         {
-            LOG_WARN(
-                "[XeFG][Lifecycle] action = destroy_not_confirmed, context = {:X}, result = {} ({}), retained = true",
-                (size_t) context, magic_enum::enum_name(result), static_cast<int32_t>(result));
+            _swapChainContext = nullptr;
+            LOG_WARN("[XeFG][Lifecycle] action = destroy_warning_quarantined, context = {:X}, result = {} ({}), "
+                     "retained = false",
+                     (size_t) context, magic_enum::enum_name(result), static_cast<int32_t>(result));
         }
         else
         {
+            _swapChainContext = context;
             LOG_ERROR("[XeFG][Lifecycle] action = destroy_failed, context = {:X}, result = {} ({}), retained = true",
                       (size_t) context, magic_enum::enum_name(result), static_cast<int32_t>(result));
         }
@@ -477,13 +478,17 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         return AbortSwapchainInitialization("D3D12InitFromSwapChainDesc");
     }
 
-    LOG_INFO("XeFG swapchain created");
-    result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
+    IDXGISwapChain* queriedSwapChain = nullptr;
+    result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(&queriedSwapChain));
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("D3D12GetSwapChainPtr", result);
+        SAFE_RELEASE(queriedSwapChain);
         return AbortSwapchainInitialization("D3D12GetSwapChainPtr");
     }
+
+    *swapChain = queriedSwapChain;
+    LOG_INFO("XeFG swapchain created");
 
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
     if (State::Instance().activeFgInput == FGInput::ForceXeLL)
@@ -653,13 +658,17 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         return AbortSwapchainInitialization("D3D12InitFromSwapChainDesc");
     }
 
-    LOG_INFO("XeFG swapchain created");
-    result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
+    IDXGISwapChain1* queriedSwapChain = nullptr;
+    result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(&queriedSwapChain));
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("D3D12GetSwapChainPtr", result);
+        SAFE_RELEASE(queriedSwapChain);
         return AbortSwapchainInitialization("D3D12GetSwapChainPtr");
     }
+
+    *swapChain = queriedSwapChain;
+    LOG_INFO("XeFG swapchain created");
 
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
     if (State::Instance().activeFgInput == FGInput::ForceXeLL)
