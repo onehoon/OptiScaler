@@ -16,6 +16,9 @@ namespace ReflexProviderDiag
 {
 namespace
 {
+constexpr size_t PrimaryCaptureLimit = 16;
+constexpr size_t AuxiliaryCaptureLimit = 8;
+
 std::atomic_uint64_t sequence = 0;
 
 struct StreamlineKey
@@ -63,6 +66,16 @@ struct LowLatencyCaptureHash
     }
 };
 
+struct CaptureBucket
+{
+    std::atomic_bool saturated = false;
+    std::mutex mutex;
+    std::unordered_set<LowLatencyCaptureKey, LowLatencyCaptureHash> seen;
+};
+
+CaptureBucket primaryBucket;
+CaptureBucket auxiliaryBucket;
+
 struct CallsiteInfo
 {
     std::string module = "unknown";
@@ -74,6 +87,34 @@ bool IsSupportedExecutable(const std::string& executable)
     return _stricmp(executable.c_str(), "re9.exe") == 0 || _stricmp(executable.c_str(), "pragmata.exe") == 0 ||
            _stricmp(executable.c_str(), "dd2.exe") == 0 || _stricmp(executable.c_str(), "dd2ccs.exe") == 0 ||
            _stricmp(executable.c_str(), "monsterhunterwilds.exe") == 0;
+}
+
+bool IsPrimaryKind(LowLatencyRecordKind kind)
+{
+    return kind == LowLatencyRecordKind::Decision || kind == LowLatencyRecordKind::Initialized;
+}
+
+bool TryCapture(CaptureBucket& bucket, const LowLatencyCaptureKey& key, std::optional<LowLatencyCaptureKey>& lastKey,
+                size_t limit)
+{
+    if (lastKey.has_value() && *lastKey == key)
+        return false;
+    lastKey = key;
+
+    std::scoped_lock lock(bucket.mutex);
+    if (bucket.seen.size() >= limit)
+    {
+        bucket.saturated.store(true, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (!bucket.seen.insert(key).second)
+        return false;
+
+    if (bucket.seen.size() >= limit)
+        bucket.saturated.store(true, std::memory_order_relaxed);
+
+    return true;
 }
 
 CallsiteInfo ResolveCallsite(void* returnAddress)
@@ -102,34 +143,41 @@ CallsiteInfo ResolveCallsite(void* returnAddress)
 uint64_t NextSequence() { return sequence.fetch_add(1, std::memory_order_relaxed) + 1; }
 } // namespace
 
-bool IsEnabled() { return IsSupportedExecutable(State::Instance().gameExe); }
+bool IsEnabled()
+{
+    static std::atomic<int8_t> cachedScope { -1 };
+
+    const auto cached = cachedScope.load(std::memory_order_relaxed);
+    if (cached >= 0)
+        return cached == 1;
+
+    const auto& executable = State::Instance().gameExe;
+    if (executable.empty())
+        return false;
+
+    const bool enabled = IsSupportedExecutable(executable);
+    cachedScope.store(enabled ? 1 : 0, std::memory_order_relaxed);
+    return enabled;
+}
 
 bool ShouldCaptureLowLatency(const LowLatencyCaptureKey& key)
 {
-    static std::atomic_bool saturated = false;
-    if (saturated.load(std::memory_order_relaxed))
+    const bool primary = IsPrimaryKind(key.kind);
+    auto& bucket = primary ? primaryBucket : auxiliaryBucket;
+    const size_t limit = primary ? PrimaryCaptureLimit : AuxiliaryCaptureLimit;
+
+    // Saturation is checked before scope work so a finished bucket becomes essentially inert.
+    if (bucket.saturated.load(std::memory_order_relaxed))
         return false;
 
-    thread_local std::optional<LowLatencyCaptureKey> lastKey;
-    if (lastKey.has_value() && *lastKey == key)
-        return false;
-    lastKey = key;
-
-    static std::mutex mutex;
-    static std::unordered_set<LowLatencyCaptureKey, LowLatencyCaptureHash> seen;
-    std::scoped_lock lock(mutex);
-    if (seen.size() >= 16)
-    {
-        saturated.store(true, std::memory_order_relaxed);
-        return false;
-    }
-
-    if (!seen.insert(key).second)
+    if (!IsEnabled())
         return false;
 
-    if (seen.size() >= 16)
-        saturated.store(true, std::memory_order_relaxed);
-    return true;
+    thread_local std::optional<LowLatencyCaptureKey> lastPrimaryKey;
+    thread_local std::optional<LowLatencyCaptureKey> lastAuxiliaryKey;
+    auto& lastKey = primary ? lastPrimaryKey : lastAuxiliaryKey;
+
+    return TryCapture(bucket, key, lastKey, limit);
 }
 
 void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, const char* detail)
