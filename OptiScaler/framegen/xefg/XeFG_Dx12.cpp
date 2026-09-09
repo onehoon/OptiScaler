@@ -295,33 +295,12 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
-            auto& state = State::Instance();
-            auto* oldRealAlias = state.currentRealSwapchain;
-            auto* oldWrappedAlias = state.currentWrappedSwapchain;
 
             if (!ReleaseSwapchainLocked(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
                           "reason = release_not_completed");
                 return false;
-            }
-
-            // State stores borrowed aliases. Clear only the aliases from this
-            // generation; never release through them or clear a newer object.
-            if (state.currentRealSwapchain == oldRealAlias)
-            {
-                if (oldRealAlias != nullptr)
-                    LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = real_swapchain, ptr = {:X}",
-                              (size_t) oldRealAlias);
-                state.currentRealSwapchain = nullptr;
-            }
-
-            if (state.currentWrappedSwapchain == oldWrappedAlias)
-            {
-                if (oldWrappedAlias != nullptr)
-                    LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = wrapped_swapchain, ptr = {:X}",
-                              (size_t) oldWrappedAlias);
-                state.currentWrappedSwapchain = nullptr;
             }
         }
         else
@@ -528,33 +507,12 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
-            auto& state = State::Instance();
-            auto* oldRealAlias = state.currentRealSwapchain;
-            auto* oldWrappedAlias = state.currentWrappedSwapchain;
 
             if (!ReleaseSwapchainLocked(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
                           "reason = release_not_completed");
                 return false;
-            }
-
-            // State stores borrowed aliases. Clear only the aliases from this
-            // generation; never release through them or clear a newer object.
-            if (state.currentRealSwapchain == oldRealAlias)
-            {
-                if (oldRealAlias != nullptr)
-                    LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = real_swapchain, ptr = {:X}",
-                              (size_t) oldRealAlias);
-                state.currentRealSwapchain = nullptr;
-            }
-
-            if (state.currentWrappedSwapchain == oldWrappedAlias)
-            {
-                if (oldWrappedAlias != nullptr)
-                    LOG_DEBUG("[XeFG][Ownership] action = alias_cleared, kind = wrapped_swapchain, ptr = {:X}",
-                              (size_t) oldWrappedAlias);
-                state.currentWrappedSwapchain = nullptr;
             }
         }
         else
