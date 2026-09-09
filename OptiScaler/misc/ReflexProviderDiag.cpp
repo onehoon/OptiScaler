@@ -16,7 +16,11 @@ namespace ReflexProviderDiag
 {
 namespace
 {
+constexpr size_t PrimaryCaptureLimit = 16;
+constexpr size_t AuxiliaryCaptureLimit = 8;
+
 std::atomic_uint64_t sequence = 0;
+std::atomic_uint32_t observedVendor { static_cast<uint32_t>(VendorId::Invalid) };
 
 struct StreamlineKey
 {
@@ -63,6 +67,16 @@ struct LowLatencyCaptureHash
     }
 };
 
+struct CaptureBucket
+{
+    std::atomic_bool saturated = false;
+    std::mutex mutex;
+    std::unordered_set<LowLatencyCaptureKey, LowLatencyCaptureHash> seen;
+};
+
+CaptureBucket primaryBucket;
+CaptureBucket auxiliaryBucket;
+
 struct CallsiteInfo
 {
     std::string module = "unknown";
@@ -74,6 +88,34 @@ bool IsSupportedExecutable(const std::string& executable)
     return _stricmp(executable.c_str(), "re9.exe") == 0 || _stricmp(executable.c_str(), "pragmata.exe") == 0 ||
            _stricmp(executable.c_str(), "dd2.exe") == 0 || _stricmp(executable.c_str(), "dd2ccs.exe") == 0 ||
            _stricmp(executable.c_str(), "monsterhunterwilds.exe") == 0;
+}
+
+bool IsPrimaryKind(LowLatencyRecordKind kind)
+{
+    return kind == LowLatencyRecordKind::Decision || kind == LowLatencyRecordKind::Initialized;
+}
+
+bool TryCapture(CaptureBucket& bucket, LowLatencyCaptureKey& key, std::optional<LowLatencyCaptureKey>& lastKey,
+                size_t limit)
+{
+    if (lastKey.has_value() && *lastKey == key)
+        return false;
+    lastKey = key;
+
+    std::scoped_lock lock(bucket.mutex);
+    if (bucket.seen.size() >= limit)
+    {
+        bucket.saturated.store(true, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (!bucket.seen.insert(key).second)
+        return false;
+
+    if (bucket.seen.size() >= limit)
+        bucket.saturated.store(true, std::memory_order_relaxed);
+
+    return true;
 }
 
 CallsiteInfo ResolveCallsite(void* returnAddress)
@@ -102,34 +144,57 @@ CallsiteInfo ResolveCallsite(void* returnAddress)
 uint64_t NextSequence() { return sequence.fetch_add(1, std::memory_order_relaxed) + 1; }
 } // namespace
 
-bool IsEnabled() { return IsSupportedExecutable(State::Instance().gameExe); }
-
-bool ShouldCaptureLowLatency(const LowLatencyCaptureKey& key)
+bool IsEnabled()
 {
-    static std::atomic_bool saturated = false;
-    if (saturated.load(std::memory_order_relaxed))
+    static std::atomic<int8_t> cachedScope { -1 };
+
+    const auto cached = cachedScope.load(std::memory_order_relaxed);
+    if (cached >= 0)
+        return cached == 1;
+
+    const auto& executable = State::Instance().gameExe;
+    if (executable.empty())
         return false;
 
-    thread_local std::optional<LowLatencyCaptureKey> lastKey;
-    if (lastKey.has_value() && *lastKey == key)
-        return false;
-    lastKey = key;
+    const bool enabled = IsSupportedExecutable(executable);
+    cachedScope.store(enabled ? 1 : 0, std::memory_order_relaxed);
+    return enabled;
+}
 
-    static std::mutex mutex;
-    static std::unordered_set<LowLatencyCaptureKey, LowLatencyCaptureHash> seen;
-    std::scoped_lock lock(mutex);
-    if (seen.size() >= 16)
-    {
-        saturated.store(true, std::memory_order_relaxed);
-        return false;
-    }
+bool ShouldCaptureLowLatency(LowLatencyCaptureKey& key)
+{
+    const bool primary = IsPrimaryKind(key.kind);
+    auto& bucket = primary ? primaryBucket : auxiliaryBucket;
+    const size_t limit = primary ? PrimaryCaptureLimit : AuxiliaryCaptureLimit;
 
-    if (!seen.insert(key).second)
+    // Saturation is checked before scope/vendor work so a finished bucket becomes essentially inert.
+    if (bucket.saturated.load(std::memory_order_relaxed))
         return false;
 
-    if (seen.size() >= 16)
-        saturated.store(true, std::memory_order_relaxed);
-    return true;
+    if (!IsEnabled())
+        return false;
+
+    if (key.vendorId == VendorId::Invalid)
+        key.vendorId = GetObservedVendor();
+
+    thread_local std::optional<LowLatencyCaptureKey> lastPrimaryKey;
+    thread_local std::optional<LowLatencyCaptureKey> lastAuxiliaryKey;
+    auto& lastKey = primary ? lastPrimaryKey : lastAuxiliaryKey;
+
+    return TryCapture(bucket, key, lastKey, limit);
+}
+
+void ObserveVendor(VendorId::Value vendorId)
+{
+    if (vendorId == VendorId::Invalid || !IsEnabled())
+        return;
+
+    observedVendor.store(static_cast<uint32_t>(vendorId), std::memory_order_relaxed);
+}
+
+VendorId::Value GetObservedVendor()
+{
+    return static_cast<VendorId::Value>(observedVendor.load(std::memory_order_relaxed));
 }
 
 void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, const char* detail)
@@ -206,9 +271,10 @@ void LogLowLatencyInputTransition(const LowLatencyCaptureKey& key, LowLatencyMod
 void LogLowLatencyInitialized(const LowLatencyCaptureKey& key, LowLatencyMode techMode)
 {
     const auto seq = NextSequence();
-    LOG_INFO("[ReflexProviderGate] seq={} area=LL phase=initialized mode={} activeInput={} activeOutput={} "
+    LOG_INFO("[ReflexProviderGate] seq={} area=LL phase=initialized vendor={} mode={} activeInput={} activeOutput={} "
              "techPresent=true techMode={} devicePresent={}",
-             seq, magic_enum::enum_name(techMode), magic_enum::enum_name(key.activeInput),
-             magic_enum::enum_name(key.activeOutput), magic_enum::enum_name(techMode), key.devicePresent);
+             seq, magic_enum::enum_name(key.vendorId), magic_enum::enum_name(techMode),
+             magic_enum::enum_name(key.activeInput), magic_enum::enum_name(key.activeOutput),
+             magic_enum::enum_name(techMode), key.devicePresent);
 }
 } // namespace ReflexProviderDiag
