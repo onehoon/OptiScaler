@@ -59,7 +59,8 @@ struct LowLatencyDecisionSnapshot
 
 bool IsEnabled();
 bool ShouldCaptureLowLatency(const LowLatencyCaptureKey& key);
-void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, const char* detail = nullptr);
+void LogStreamlineOnce(sl::Feature feature, const char* api, void* returnAddress, sl::Result result,
+                       const char* detail = nullptr);
 void LogLowLatencyDecision(const LowLatencyDecisionSnapshot& snapshot);
 void LogLowLatencyEarlyExit(const char* reason, const LowLatencyCaptureKey& key);
 void LogLowLatencyInputTransition(const LowLatencyCaptureKey& key, LowLatencyMode techMode);

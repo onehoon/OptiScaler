@@ -7,8 +7,10 @@
 
 #include <string>
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <misc/IdentifyGpu.h>
+#include <misc/ReflexDxgiIdentityScope.h>
 
 typedef HRESULT (*PFN_GetDesc)(IDXGIAdapter* This, DXGI_ADAPTER_DESC* pDesc);
 typedef HRESULT (*PFN_GetDesc1)(IDXGIAdapter1* This, DXGI_ADAPTER_DESC1* pDesc);
@@ -28,6 +30,89 @@ inline static std::string toLower(std::string s)
 
 inline static bool iequals(const std::string& a, const std::string& b) { return toLower(a) == toLower(b); }
 
+namespace
+{
+constexpr uint32_t SelectiveLogLimit = 16;
+std::atomic_uint32_t selectiveLogCount = 0;
+
+bool IsExcludedCaller(const std::string& caller)
+{
+    return iequals(caller, "vulkan-1.dll") || iequals(caller, "amdvlk64.dll") || iequals(caller, "dxgi.dll") ||
+           iequals(caller, "d3d12.dll") || iequals(caller, "d3d12Core.dll");
+}
+
+bool IsSelectiveReflexDxgiPocEligible()
+{
+    const auto* config = Config::Instance();
+    if (ReflexDxgiIdentity::ParseScope(config->ReflexDxgiIdentityScope.value_or_default()) ==
+            ReflexDxgiIdentity::Scope::Off ||
+        !(State::Instance().gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel) ||
+        !config->StreamlineSpoofing.value_or_default() || config->DxgiSpoofing.value_or_default() || SkipSpoofing())
+    {
+        return false;
+    }
+
+    return IdentifyGpu::getPrimaryGpu().vendorId == VendorId::Intel;
+}
+
+bool TryReserveSelectiveLog()
+{
+    auto current = selectiveLogCount.load(std::memory_order_relaxed);
+    while (current < SelectiveLogLimit &&
+           !selectiveLogCount.compare_exchange_weak(current, current + 1, std::memory_order_relaxed))
+    {
+    }
+    return current < SelectiveLogLimit;
+}
+
+template <typename T> bool ApplyConfiguredIdentity(T* desc, const char* api, const std::string& caller)
+{
+    const auto* config = Config::Instance();
+    const bool targetVendorIdMatches =
+        !config->TargetVendorId.has_value() || config->TargetVendorId.value() == desc->VendorId;
+    const bool targetDeviceIdMatches =
+        !config->TargetDeviceId.has_value() || config->TargetDeviceId.value() == desc->DeviceId;
+
+    if (desc->VendorId == VendorId::Microsoft || !targetVendorIdMatches || !targetDeviceIdMatches)
+        return false;
+
+    const bool broadSpoof = config->DxgiSpoofing.value_or_default() && !SkipSpoofing();
+    const bool selectiveEligible = !broadSpoof && IsSelectiveReflexDxgiPocEligible();
+    const bool selectiveSpoof =
+        selectiveEligible && ReflexDxgiIdentity::ShouldApply(caller, config->ReflexDxgiIdentityScope.value_or_default(),
+                                                             true, true, true, false, false);
+
+    if (!broadSpoof && !selectiveSpoof)
+        return false;
+
+    const auto originalVendorId = desc->VendorId;
+    const auto originalDeviceId = desc->DeviceId;
+    const auto spoofedVendorId = config->SpoofedVendorId.value_or_default();
+    const auto spoofedDeviceId = config->SpoofedDeviceId.value_or_default();
+    desc->VendorId = spoofedVendorId;
+    desc->DeviceId = spoofedDeviceId;
+
+    const auto spoofedName = config->SpoofedGPUName.value_or_default();
+    std::memset(desc->Description, 0, sizeof(desc->Description));
+    std::wcscpy(desc->Description, spoofedName.c_str());
+
+    if (selectiveSpoof && !broadSpoof && TryReserveSelectiveLog())
+    {
+        LOG_INFO("[ReflexDxgiPOC] api={} caller={} scope={} originalVendorId=0x{:X} originalDeviceId=0x{:X} "
+                 "spoofVendorId=0x{:X} spoofDeviceId=0x{:X} targetExe={}",
+                 api, caller, config->ReflexDxgiIdentityScope.value_or_default(), originalVendorId, originalDeviceId,
+                 spoofedVendorId, spoofedDeviceId, State::Instance().gameExe);
+    }
+
+#ifdef _DEBUG
+    if (broadSpoof)
+        LOG_DEBUG("spoofing");
+#endif
+
+    return true;
+}
+} // namespace
+
 #pragma region DXGI Adapter methods
 
 HRESULT DxgiSpoofing::hkGetDesc3(IDXGIAdapter4* This, DXGI_ADAPTER_DESC3* pDesc)
@@ -36,8 +121,7 @@ HRESULT DxgiSpoofing::hkGetDesc3(IDXGIAdapter4* This, DXGI_ADAPTER_DESC3* pDesc)
 
     auto caller = Util::WhoIsTheCaller(_ReturnAddress());
 
-    if (iequals(caller, "vulkan-1.dll") || iequals(caller, "amdvlk64.dll") || iequals(caller, "dxgi.dll") ||
-        iequals(caller, "d3d12.dll") || iequals(caller, "d3d12Core.dll"))
+    if (IsExcludedCaller(caller))
     {
         return result;
     }
@@ -54,24 +138,7 @@ HRESULT DxgiSpoofing::hkGetDesc3(IDXGIAdapter4* This, DXGI_ADAPTER_DESC3* pDesc)
             pDesc->DedicatedVideoMemory = newMemSize;
         }
 
-        if (pDesc->VendorId != VendorId::Microsoft &&
-            (!Config::Instance()->TargetVendorId.has_value() ||
-             Config::Instance()->TargetVendorId.value() == pDesc->VendorId) &&
-            (!Config::Instance()->TargetDeviceId.has_value() ||
-             Config::Instance()->TargetDeviceId.value() == pDesc->DeviceId) &&
-            Config::Instance()->DxgiSpoofing.value_or_default() && !SkipSpoofing())
-        {
-            pDesc->VendorId = Config::Instance()->SpoofedVendorId.value_or_default();
-            pDesc->DeviceId = Config::Instance()->SpoofedDeviceId.value_or_default();
-
-            auto szName = Config::Instance()->SpoofedGPUName.value_or_default();
-            std::memset(pDesc->Description, 0, sizeof(pDesc->Description));
-            std::wcscpy(pDesc->Description, szName.c_str());
-
-#ifdef _DEBUG
-            LOG_DEBUG("spoofing");
-#endif
-        }
+        ApplyConfiguredIdentity(pDesc, "GetDesc3", caller);
     }
 
     AttachToAdapter(This);
@@ -85,8 +152,7 @@ HRESULT DxgiSpoofing::hkGetDesc2(IDXGIAdapter2* This, DXGI_ADAPTER_DESC2* pDesc)
 
     auto caller = Util::WhoIsTheCaller(_ReturnAddress());
 
-    if (iequals(caller, "vulkan-1.dll") || iequals(caller, "amdvlk64.dll") || iequals(caller, "dxgi.dll") ||
-        iequals(caller, "d3d12.dll") || iequals(caller, "d3d12Core.dll"))
+    if (IsExcludedCaller(caller))
     {
         return result;
     }
@@ -103,26 +169,7 @@ HRESULT DxgiSpoofing::hkGetDesc2(IDXGIAdapter2* This, DXGI_ADAPTER_DESC2* pDesc)
             pDesc->DedicatedVideoMemory = newMemSize;
         }
 
-        auto targetVendorIdMatches = !Config::Instance()->TargetVendorId.has_value() ||
-                                     Config::Instance()->TargetVendorId.value() == pDesc->VendorId;
-
-        auto targetDeviceIdMatches = !Config::Instance()->TargetDeviceId.has_value() ||
-                                     Config::Instance()->TargetDeviceId.value() == pDesc->DeviceId;
-
-        if (pDesc->VendorId != VendorId::Microsoft && targetVendorIdMatches && targetDeviceIdMatches &&
-            Config::Instance()->DxgiSpoofing.value_or_default() && !SkipSpoofing())
-        {
-            pDesc->VendorId = Config::Instance()->SpoofedVendorId.value_or_default();
-            pDesc->DeviceId = Config::Instance()->SpoofedDeviceId.value_or_default();
-
-            auto szName = Config::Instance()->SpoofedGPUName.value_or_default();
-            std::memset(pDesc->Description, 0, sizeof(pDesc->Description));
-            std::wcscpy(pDesc->Description, szName.c_str());
-
-#ifdef _DEBUG
-            LOG_DEBUG("spoofing");
-#endif
-        }
+        ApplyConfiguredIdentity(pDesc, "GetDesc2", caller);
     }
 
     AttachToAdapter(This);
@@ -136,8 +183,7 @@ HRESULT DxgiSpoofing::hkGetDesc1(IDXGIAdapter1* This, DXGI_ADAPTER_DESC1* pDesc)
 
     auto caller = Util::WhoIsTheCaller(_ReturnAddress());
 
-    if (iequals(caller, "vulkan-1.dll") || iequals(caller, "amdvlk64.dll") || iequals(caller, "dxgi.dll") ||
-        iequals(caller, "d3d12.dll") || iequals(caller, "d3d12Core.dll"))
+    if (IsExcludedCaller(caller))
     {
         return result;
     }
@@ -154,26 +200,7 @@ HRESULT DxgiSpoofing::hkGetDesc1(IDXGIAdapter1* This, DXGI_ADAPTER_DESC1* pDesc)
             pDesc->DedicatedVideoMemory = newMemSize;
         }
 
-        auto targetVendorIdMatches = !Config::Instance()->TargetVendorId.has_value() ||
-                                     Config::Instance()->TargetVendorId.value() == pDesc->VendorId;
-
-        auto targetDeviceIdMatches = !Config::Instance()->TargetDeviceId.has_value() ||
-                                     Config::Instance()->TargetDeviceId.value() == pDesc->DeviceId;
-
-        if (pDesc->VendorId != VendorId::Microsoft && targetVendorIdMatches && targetDeviceIdMatches &&
-            Config::Instance()->DxgiSpoofing.value_or_default() && !SkipSpoofing())
-        {
-            pDesc->VendorId = Config::Instance()->SpoofedVendorId.value_or_default();
-            pDesc->DeviceId = Config::Instance()->SpoofedDeviceId.value_or_default();
-
-            auto szName = Config::Instance()->SpoofedGPUName.value_or_default();
-            std::memset(pDesc->Description, 0, sizeof(pDesc->Description));
-            std::wcscpy(pDesc->Description, szName.c_str());
-
-#ifdef _DEBUG
-            LOG_DEBUG("spoofing");
-#endif
-        }
+        ApplyConfiguredIdentity(pDesc, "GetDesc1", caller);
 
         if (caller.starts_with("amdxcffx64") || caller.starts_with("amd_fidelityfx_upscaler_dx12"))
         {
@@ -198,8 +225,7 @@ HRESULT DxgiSpoofing::hkGetDesc(IDXGIAdapter* This, DXGI_ADAPTER_DESC* pDesc)
 
     auto caller = Util::WhoIsTheCaller(_ReturnAddress());
 
-    if (iequals(caller, "vulkan-1.dll") || iequals(caller, "amdvlk64.dll") || iequals(caller, "dxgi.dll") ||
-        iequals(caller, "d3d12.dll") || iequals(caller, "d3d12Core.dll"))
+    if (IsExcludedCaller(caller))
     {
         return result;
     }
@@ -216,26 +242,7 @@ HRESULT DxgiSpoofing::hkGetDesc(IDXGIAdapter* This, DXGI_ADAPTER_DESC* pDesc)
             pDesc->DedicatedVideoMemory = newMemSize;
         }
 
-        auto targetVendorIdMatches = !Config::Instance()->TargetVendorId.has_value() ||
-                                     Config::Instance()->TargetVendorId.value() == pDesc->VendorId;
-
-        auto targetDeviceIdMatches = !Config::Instance()->TargetDeviceId.has_value() ||
-                                     Config::Instance()->TargetDeviceId.value() == pDesc->DeviceId;
-
-        if (pDesc->VendorId != VendorId::Microsoft && targetVendorIdMatches && targetDeviceIdMatches &&
-            Config::Instance()->DxgiSpoofing.value_or_default() && !SkipSpoofing())
-        {
-            pDesc->VendorId = Config::Instance()->SpoofedVendorId.value_or_default();
-            pDesc->DeviceId = Config::Instance()->SpoofedDeviceId.value_or_default();
-
-            auto szName = Config::Instance()->SpoofedGPUName.value_or_default();
-            std::memset(pDesc->Description, 0, sizeof(pDesc->Description));
-            std::wcscpy(pDesc->Description, szName.c_str());
-
-#ifdef _DEBUG
-            LOG_DEBUG("spoofing");
-#endif
-        }
+        ApplyConfiguredIdentity(pDesc, "GetDesc", caller);
     }
 
     AttachToAdapter(This);
@@ -250,7 +257,10 @@ HRESULT DxgiSpoofing::hkGetDesc(IDXGIAdapter* This, DXGI_ADAPTER_DESC* pDesc)
 void DxgiSpoofing::AttachToAdapter(IUnknown* unkAdapter)
 {
     static bool logAdded = false;
-    if (!Config::Instance()->DxgiSpoofing.value_or_default() && !Config::Instance()->DxgiVRAM.has_value())
+    const bool broadDxgiNeeded =
+        Config::Instance()->DxgiSpoofing.value_or_default() || Config::Instance()->DxgiVRAM.has_value();
+    const bool selectiveReflexDxgiNeeded = IsSelectiveReflexDxgiPocEligible();
+    if (!broadDxgiNeeded && !selectiveReflexDxgiNeeded)
     {
         if (!logAdded)
         {

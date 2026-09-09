@@ -24,6 +24,7 @@ std::atomic_uint64_t sequence = 0;
 struct StreamlineKey
 {
     uintptr_t returnAddress = 0;
+    sl::Feature feature {};
     std::string api;
     std::string detail;
 
@@ -34,10 +35,11 @@ struct StreamlineKeyHash
 {
     size_t operator()(const StreamlineKey& key) const noexcept
     {
-        const auto addressHash = std::hash<uintptr_t> {}(key.returnAddress);
-        const auto apiHash = std::hash<std::string> {}(key.api);
-        const auto detailHash = std::hash<std::string> {}(key.detail);
-        return addressHash ^ (apiHash << 1) ^ (detailHash << 2);
+        size_t hash = std::hash<uintptr_t> {}(key.returnAddress);
+        hash ^= std::hash<int> {}(static_cast<int>(key.feature)) << 1;
+        hash ^= std::hash<std::string> {}(key.api) << 2;
+        hash ^= std::hash<std::string> {}(key.detail) << 3;
+        return hash;
     }
 };
 
@@ -180,7 +182,8 @@ bool ShouldCaptureLowLatency(const LowLatencyCaptureKey& key)
     return TryCapture(bucket, key, lastKey, limit);
 }
 
-void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, const char* detail)
+void LogStreamlineOnce(sl::Feature feature, const char* api, void* returnAddress, sl::Result result,
+                       const char* detail)
 {
     if (!IsEnabled() || api == nullptr)
         return;
@@ -189,7 +192,8 @@ void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, 
     static std::mutex mutex;
     static std::unordered_set<StreamlineKey, StreamlineKeyHash> seen;
 
-    const StreamlineKey key { reinterpret_cast<uintptr_t>(returnAddress), std::string(api), std::string(detailView) };
+    const StreamlineKey key { reinterpret_cast<uintptr_t>(returnAddress), feature, std::string(api),
+                              std::string(detailView) };
     {
         std::scoped_lock lock(mutex);
         if (seen.find(key) != seen.end() || seen.size() >= 32)
@@ -199,16 +203,18 @@ void LogStreamlineOnce(const char* api, void* returnAddress, sl::Result result, 
 
     const auto callsite = ResolveCallsite(returnAddress);
     const auto resultName = magic_enum::enum_name(result);
+    const char* featureName =
+        feature == sl::kFeaturePCL ? "PCL" : feature == sl::kFeatureReflex ? "Reflex" : "Unknown";
     const auto seq = NextSequence();
     if (detailView.empty())
     {
-        LOG_INFO("[ReflexProviderGate] seq={} area=SL api={} result={} caller={} rva=0x{:X}", seq, api, resultName,
-                 callsite.module, callsite.rva);
+        LOG_INFO("[ReflexProviderGate] seq={} area=SL feature={} api={} result={} caller={} rva=0x{:X}", seq,
+                 featureName, api, resultName, callsite.module, callsite.rva);
     }
     else
     {
-        LOG_INFO("[ReflexProviderGate] seq={} area=SL api={} detail={} result={} caller={} rva=0x{:X}", seq, api,
-                 detailView, resultName, callsite.module, callsite.rva);
+        LOG_INFO("[ReflexProviderGate] seq={} area=SL feature={} api={} detail={} result={} caller={} rva=0x{:X}", seq,
+                 featureName, api, detailView, resultName, callsite.module, callsite.rva);
     }
 }
 

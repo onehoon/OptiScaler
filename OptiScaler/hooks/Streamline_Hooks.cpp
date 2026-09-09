@@ -34,6 +34,11 @@ static bool IsSL1AndFGActive()
     return state.streamlineVersion.major == 1 && state.activeFgInput == FGInput::DLSSG;
 }
 
+static bool IsReflexOrPclFeature(sl::Feature feature)
+{
+    return feature == sl::kFeatureReflex || feature == sl::kFeaturePCL;
+}
+
 static void PatchSL1PluginJson(nlohmann::json& configJson)
 {
     if (!IsSL1AndFGActive())
@@ -273,10 +278,10 @@ sl::Result StreamlineHooks::hkslIsFeatureSupported(sl::Feature feature, const sl
     if (feature == sl::kFeatureDLSS_G)
         return sl::Result::eOk;
 
-    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slIsFeatureSupported(feature, adapterInfo);
-    if (feature == sl::kFeatureReflex)
-        ReflexProviderDiag::LogStreamlineOnce("slIsFeatureSupported", returnAddress, result);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slIsFeatureSupported", returnAddress, result);
     return result;
 }
 
@@ -288,10 +293,10 @@ sl::Result StreamlineHooks::hkslIsFeatureLoaded(sl::Feature feature, bool& loade
         return sl::Result::eOk;
     }
 
-    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slIsFeatureLoaded(feature, loaded);
-    if (feature == sl::kFeatureReflex)
-        ReflexProviderDiag::LogStreamlineOnce("slIsFeatureLoaded", returnAddress, result);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slIsFeatureLoaded", returnAddress, result);
     return result;
 }
 
@@ -300,10 +305,10 @@ sl::Result StreamlineHooks::hkslGetFeatureRequirements(sl::Feature feature, sl::
     if (feature == sl::kFeatureDLSS_G)
         return sl::Result::eOk;
 
-    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slGetFeatureRequirements(feature, requirements);
-    if (feature == sl::kFeatureReflex)
-        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureRequirements", returnAddress, result);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureRequirements", returnAddress, result);
     return result;
 }
 
@@ -318,10 +323,10 @@ sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::Featu
         return sl::Result::eOk;
     }
 
-    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slGetFeatureVersion(feature, version);
-    if (feature == sl::kFeatureReflex)
-        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureVersion", returnAddress, result);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureVersion", returnAddress, result);
     return result;
 }
 
@@ -360,10 +365,10 @@ sl::Result StreamlineHooks::hkslGetFeatureFunction(sl::Feature feature, const ch
         }
     }
 
-    const auto returnAddress = feature == sl::kFeatureReflex ? _ReturnAddress() : nullptr;
+    const auto returnAddress = IsReflexOrPclFeature(feature) ? _ReturnAddress() : nullptr;
     const auto result = o_slGetFeatureFunction(feature, functionName, function);
-    if (feature == sl::kFeatureReflex)
-        ReflexProviderDiag::LogStreamlineOnce("slGetFeatureFunction", returnAddress, result, functionName);
+    if (IsReflexOrPclFeature(feature))
+        ReflexProviderDiag::LogStreamlineOnce(feature, "slGetFeatureFunction", returnAddress, result, functionName);
     return result;
 }
 
