@@ -68,10 +68,10 @@ bool TryReserveSelectiveLog()
 template <typename T> bool ApplyConfiguredIdentity(T* desc, const char* api, const std::string& caller)
 {
     const auto* config = Config::Instance();
-    const bool targetVendorIdMatches = !config->TargetVendorId.has_value() ||
-                                       config->TargetVendorId.value() == desc->VendorId;
-    const bool targetDeviceIdMatches = !config->TargetDeviceId.has_value() ||
-                                       config->TargetDeviceId.value() == desc->DeviceId;
+    const bool targetVendorIdMatches =
+        !config->TargetVendorId.has_value() || config->TargetVendorId.value() == desc->VendorId;
+    const bool targetDeviceIdMatches =
+        !config->TargetDeviceId.has_value() || config->TargetDeviceId.value() == desc->DeviceId;
 
     if (desc->VendorId == VendorId::Microsoft || !targetVendorIdMatches || !targetDeviceIdMatches)
         return false;
@@ -80,7 +80,7 @@ template <typename T> bool ApplyConfiguredIdentity(T* desc, const char* api, con
     const bool selectiveEligible = !broadSpoof && IsSelectiveReflexDxgiPocEligible();
     const bool selectiveSpoof =
         selectiveEligible && ReflexDxgiIdentity::ShouldApply(caller, config->ReflexDxgiIdentityScope.value_or_default(),
-                                                              true, true, true, false, false);
+                                                             true, true, true, false, false);
 
     if (!broadSpoof && !selectiveSpoof)
         return false;
@@ -100,8 +100,8 @@ template <typename T> bool ApplyConfiguredIdentity(T* desc, const char* api, con
     {
         LOG_INFO("[ReflexDxgiPOC] api={} caller={} scope={} originalVendorId=0x{:X} originalDeviceId=0x{:X} "
                  "spoofVendorId=0x{:X} spoofDeviceId=0x{:X} targetExe={}",
-                 api, caller, config->ReflexDxgiIdentityScope.value_or_default(), originalVendorId,
-                 originalDeviceId, spoofedVendorId, spoofedDeviceId, State::Instance().gameExe);
+                 api, caller, config->ReflexDxgiIdentityScope.value_or_default(), originalVendorId, originalDeviceId,
+                 spoofedVendorId, spoofedDeviceId, State::Instance().gameExe);
     }
 
 #ifdef _DEBUG
@@ -257,8 +257,8 @@ HRESULT DxgiSpoofing::hkGetDesc(IDXGIAdapter* This, DXGI_ADAPTER_DESC* pDesc)
 void DxgiSpoofing::AttachToAdapter(IUnknown* unkAdapter)
 {
     static bool logAdded = false;
-    const bool broadDxgiNeeded = Config::Instance()->DxgiSpoofing.value_or_default() ||
-                                 Config::Instance()->DxgiVRAM.has_value();
+    const bool broadDxgiNeeded =
+        Config::Instance()->DxgiSpoofing.value_or_default() || Config::Instance()->DxgiVRAM.has_value();
     const bool selectiveReflexDxgiNeeded = IsSelectiveReflexDxgiPocEligible();
     if (!broadDxgiNeeded && !selectiveReflexDxgiNeeded)
     {
