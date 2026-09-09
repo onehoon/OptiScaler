@@ -44,9 +44,18 @@ inline static bool IsIntelReflexDxgiQuirkEligible()
     return IdentifyGpu::getPrimaryGpu().vendorId == VendorId::Intel;
 }
 
-inline static bool ShouldApplyIntelReflexGameIdentity(const std::string& caller)
+template <typename T> inline static bool ShouldApplyIntelReflexGameIdentity(const std::string& caller, const T* desc)
 {
-    return IsIntelReflexDxgiQuirkEligible() && iequals(caller, State::Instance().gameExe);
+    if (!IsIntelReflexDxgiQuirkEligible() || !iequals(caller, State::Instance().gameExe))
+        return false;
+
+    const auto* config = Config::Instance();
+    const bool targetVendorIdMatches =
+        !config->TargetVendorId.has_value() || config->TargetVendorId.value() == desc->VendorId;
+    const bool targetDeviceIdMatches =
+        !config->TargetDeviceId.has_value() || config->TargetDeviceId.value() == desc->DeviceId;
+
+    return desc->VendorId != VendorId::Microsoft && targetVendorIdMatches && targetDeviceIdMatches;
 }
 
 template <typename T> inline static void ApplyIntelReflexGameIdentity(T* desc)
@@ -106,7 +115,7 @@ HRESULT DxgiSpoofing::hkGetDesc3(IDXGIAdapter4* This, DXGI_ADAPTER_DESC3* pDesc)
 #endif
         }
 
-        if (pDesc->VendorId != VendorId::Microsoft && ShouldApplyIntelReflexGameIdentity(caller))
+        if (ShouldApplyIntelReflexGameIdentity(caller, pDesc))
             ApplyIntelReflexGameIdentity(pDesc);
     }
 
@@ -160,7 +169,7 @@ HRESULT DxgiSpoofing::hkGetDesc2(IDXGIAdapter2* This, DXGI_ADAPTER_DESC2* pDesc)
 #endif
         }
 
-        if (pDesc->VendorId != VendorId::Microsoft && ShouldApplyIntelReflexGameIdentity(caller))
+        if (ShouldApplyIntelReflexGameIdentity(caller, pDesc))
             ApplyIntelReflexGameIdentity(pDesc);
     }
 
@@ -225,7 +234,7 @@ HRESULT DxgiSpoofing::hkGetDesc1(IDXGIAdapter1* This, DXGI_ADAPTER_DESC1* pDesc)
             }
         }
 
-        if (pDesc->VendorId != VendorId::Microsoft && ShouldApplyIntelReflexGameIdentity(caller))
+        if (ShouldApplyIntelReflexGameIdentity(caller, pDesc))
             ApplyIntelReflexGameIdentity(pDesc);
     }
 
@@ -279,7 +288,7 @@ HRESULT DxgiSpoofing::hkGetDesc(IDXGIAdapter* This, DXGI_ADAPTER_DESC* pDesc)
 #endif
         }
 
-        if (pDesc->VendorId != VendorId::Microsoft && ShouldApplyIntelReflexGameIdentity(caller))
+        if (ShouldApplyIntelReflexGameIdentity(caller, pDesc))
             ApplyIntelReflexGameIdentity(pDesc);
     }
 
