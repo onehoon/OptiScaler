@@ -1967,8 +1967,9 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
 {
     XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseEnter,
                       reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
-                      reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0,
-                      _swapchainRecreationBlocked ? 1u : 0u, hwnd == _hwnd ? 1u : 0u);
+                      reinterpret_cast<uint64_t>(this), 0, 0,
+                      _swapchainReleaseInProgress.load(std::memory_order_acquire),
+                      _swapchainReleaseOwnerThread.load(std::memory_order_acquire));
     std::unique_lock lifecycleLock(_swapchainLifecycleMutex);
 
     if (!releaseFinalProxy)

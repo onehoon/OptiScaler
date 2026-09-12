@@ -707,15 +707,15 @@ static Fsr3::FfxErrorCode hkffxFsr3ConfigureFrameGeneration(void* context, Fsr3:
 
         s.fsrfgInputActive = config->frameGenerationEnabled;
 
-        XeFGTrace::Record(
-            XeFGTrace::EventType::FSRFGConfigObserved, reinterpret_cast<uint64_t>(s.currentFGSwapchain),
-            reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(context), fg->FrameCount(), 0, 0, 0, 0,
-            (config->frameGenerationEnabled ? 1u : 0u) | (fg->IsActive() ? 1u << 1 : 0u) |
-                (fg->IsPaused() ? 1u << 2 : 0u) | (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
-            2);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, reinterpret_cast<uint64_t>(s.currentFGSwapchain),
+                          reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
+                          (config->frameGenerationEnabled ? 1u : 0u) | (fg->IsActive() ? 1u << 1 : 0u) |
+                              (fg->IsPaused() ? 1u << 2 : 0u) |
+                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          2);
         XeFGTrace::Record(
             XeFGTrace::EventType::FSRFGActivateDecision, reinterpret_cast<uint64_t>(s.currentFGSwapchain),
-            reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(context), fg->FrameCount(), 0, 0, 0, 0,
+            reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
             (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default()
                  ? 1u
                  : 0u) |
@@ -728,11 +728,11 @@ static Fsr3::FfxErrorCode hkffxFsr3ConfigureFrameGeneration(void* context, Fsr3:
             {
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateBefore,
                                   reinterpret_cast<uint64_t>(s.currentFGSwapchain), reinterpret_cast<uint64_t>(fg),
-                                  reinterpret_cast<uint64_t>(context), fg->FrameCount(), 0, 0, 0, 0, 2);
+                                  reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0, 2);
                 fg->Activate();
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateAfter,
                                   reinterpret_cast<uint64_t>(s.currentFGSwapchain), reinterpret_cast<uint64_t>(fg),
-                                  reinterpret_cast<uint64_t>(context), fg->FrameCount(), 0, 0, 0, 0,
+                                  reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
                                   (fg->IsActive() ? 1u : 0u) | (fg->IsPaused() ? 1u << 1 : 0u), 2);
                 fg->ResetCounters();
             }
@@ -814,14 +814,14 @@ static Fsr3::FfxErrorCode hkffxSetFrameGenerationConfigToSwapchainDX12(Fsr3::Ffx
         s.fsrfgInputActive = config->frameGenerationEnabled;
 
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, reinterpret_cast<uint64_t>(s.currentFGSwapchain),
-                          reinterpret_cast<uint64_t>(fg), 0, fg->FrameCount(), 0, 0, 0, 0,
+                          reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0, 0,
                           (config->frameGenerationEnabled ? 1u : 0u) | (fg->IsActive() ? 1u << 1 : 0u) |
                               (fg->IsPaused() ? 1u << 2 : 0u) |
                               (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
                           2);
         XeFGTrace::Record(
             XeFGTrace::EventType::FSRFGActivateDecision, reinterpret_cast<uint64_t>(s.currentFGSwapchain),
-            reinterpret_cast<uint64_t>(fg), 0, fg->FrameCount(), 0, 0, 0, 0,
+            reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0, 0,
             (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default()
                  ? 1u
                  : 0u) |
@@ -834,12 +834,11 @@ static Fsr3::FfxErrorCode hkffxSetFrameGenerationConfigToSwapchainDX12(Fsr3::Ffx
             {
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateBefore,
                                   reinterpret_cast<uint64_t>(s.currentFGSwapchain), reinterpret_cast<uint64_t>(fg), 0,
-                                  fg->FrameCount(), 0, 0, 0, 0, 2);
+                                  0, 0, 0, 0, 0, 2);
                 fg->Activate();
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateAfter,
                                   reinterpret_cast<uint64_t>(s.currentFGSwapchain), reinterpret_cast<uint64_t>(fg), 0,
-                                  fg->FrameCount(), 0, 0, 0, 0,
-                                  (fg->IsActive() ? 1u : 0u) | (fg->IsPaused() ? 1u << 1 : 0u), 2);
+                                  0, 0, 0, 0, 0, (fg->IsActive() ? 1u : 0u) | (fg->IsPaused() ? 1u << 1 : 0u), 2);
                 fg->ResetCounters();
             }
         }
@@ -1349,31 +1348,34 @@ void FSR3FG::SetUpscalerInputs(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_P
     if (State::Instance().activeFgInput != FGInput::FSRFG30 || fg == nullptr || _device == nullptr)
         return;
 
-    XeFGTrace::Record(XeFGTrace::EventType::FSRFGFrameBoundaryEnter,
-                      reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain), reinterpret_cast<uint64_t>(fg),
-                      reinterpret_cast<uint64_t>(_device), fg->FrameCount(), 0, 0, 0, 0, 2);
-
+    uint64_t frameCountAfter = 0;
     {
         std::lock_guard<std::mutex> lock(_newFrameMutex);
+        const auto frameCountBefore = fg->FrameCount();
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGFrameBoundaryEnter,
+                          reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
+                          reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(_device), frameCountBefore, 0, 0,
+                          0, 0, 2);
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGStartNewFrameBefore,
                           reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
-                          reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(_device), fg->FrameCount(), 0, 0,
+                          reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(_device), frameCountBefore, 0, 0,
                           0, 0, 2);
         fg->StartNewFrame();
         _uiRes[fg->GetIndex()] = {};
+        frameCountAfter = fg->FrameCount();
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGStartNewFrameAfter,
                           reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
-                          reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(_device), fg->FrameCount(), 0, 0,
-                          0, 0, static_cast<uint32_t>(fg->GetIndex()), 2);
+                          reinterpret_cast<uint64_t>(fg), reinterpret_cast<uint64_t>(_device), frameCountAfter, 0, 0, 0,
+                          0, static_cast<uint32_t>(fg->GetIndex()), 2);
     }
 
     XeFGTrace::Record(XeFGTrace::EventType::FSRFGEvaluateStateBefore,
                       reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain), reinterpret_cast<uint64_t>(fg),
-                      reinterpret_cast<uint64_t>(_device), fg->FrameCount(), 0, 0, 0, 0, 2);
+                      reinterpret_cast<uint64_t>(_device), frameCountAfter, 0, 0, 0, 0, 2);
     fg->EvaluateState(_device, _fgConst);
     XeFGTrace::Record(XeFGTrace::EventType::FSRFGEvaluateStateAfter,
                       reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain), reinterpret_cast<uint64_t>(fg),
-                      reinterpret_cast<uint64_t>(_device), fg->FrameCount(), 0, 0, 0, 0, 2);
+                      reinterpret_cast<uint64_t>(_device), frameCountAfter, 0, 0, 0, 0, 2);
 
     // FSR Camera values
     float cameraNear = 0.0f;
