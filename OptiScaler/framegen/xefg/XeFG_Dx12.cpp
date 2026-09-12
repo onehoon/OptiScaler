@@ -208,17 +208,15 @@ HWND XeFG_Dx12::Hwnd() { return _hwnd; }
 
 bool XeFG_Dx12::DestroySwapchainContext()
 {
-    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextEnter,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
-                      reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, 0, 0,
-                      State::Instance().isShuttingDown ? 1u : 0u, _swapchainRecreationBlocked ? 1u : 0u);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, 0,
+                      0, State::Instance().isShuttingDown ? 1u : 0u, _swapchainRecreationBlocked ? 1u : 0u);
     LOG_DEBUG("");
 
     if (_swapChainContext == nullptr || State::Instance().isShuttingDown)
     {
-        XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit,
-                          reinterpret_cast<uint64_t>(_swapChain), 0, reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0,
-                          S_OK, 0, 1);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit, reinterpret_cast<uint64_t>(_swapChain),
+                          0, reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, S_OK, 0, 1);
         return true;
     }
 
@@ -255,17 +253,16 @@ bool XeFG_Dx12::DestroySwapchainContext()
                       (size_t) context, magic_enum::enum_name(result), static_cast<int32_t>(result));
         }
 
-        XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit,
-                          reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(context),
-                          reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, static_cast<int32_t>(result), 0, 0);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(context), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0,
+                          static_cast<int32_t>(result), 0, 0);
         return false;
     }
 
     _swapchainRecreationBlocked = false;
     State::Instance().currentFGSwapchain = nullptr;
-    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(context),
-                      reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, S_OK, 0, 1);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(context), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, S_OK, 0, 1);
     return true;
 }
 
@@ -777,8 +774,7 @@ void XeFG_Dx12::Activate()
 {
     XeFGTrace::Record(XeFGTrace::EventType::XeFGActivateEnter, reinterpret_cast<uint64_t>(_swapChain),
                       reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext),
-                      _frameCount, 0, 0, 0, 0,
-                      (_isActive ? 1u : 0u) | (IsLowResMV() ? 1u << 1 : 0u));
+                      _frameCount, 0, 0, 0, 0, (_isActive ? 1u : 0u) | (IsLowResMV() ? 1u << 1 : 0u));
     LOG_DEBUG("");
 
     auto currentFeature = State::Instance().currentFeature;
@@ -790,8 +786,7 @@ void XeFG_Dx12::Activate()
                       reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext),
                       _frameCount, 0, 0, 0, 0,
                       (_swapChainContext != nullptr ? 1u : 0u) | (_fgContext != nullptr ? 1u << 1 : 0u) |
-                          (!_isActive ? 1u << 2 : 0u) | (IsLowResMV() ? 1u << 3 : 0u) |
-                          (nativeAA ? 1u << 4 : 0u) |
+                          (!_isActive ? 1u << 2 : 0u) | (IsLowResMV() ? 1u << 3 : 0u) | (nativeAA ? 1u << 4 : 0u) |
                           ((State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ? 1u << 5 : 0u) |
                           (Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default() ? 1u << 6 : 0u));
 
@@ -892,20 +887,18 @@ void XeFG_Dx12::Deactivate()
 
 void XeFG_Dx12::DestroyFGContext()
 {
-    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyFGContextEnter,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_fgContext),
-                      reinterpret_cast<uint64_t>(_swapChainContext), _frameCount, 0, 0, 0, 0,
-                      (_isActive ? 1u : 0u) | (IsPaused() ? 1u << 1 : 0u));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyFGContextEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext),
+                      _frameCount, 0, 0, 0, 0, (_isActive ? 1u : 0u) | (IsPaused() ? 1u << 1 : 0u));
     Deactivate();
 
     if (_fgContext != nullptr)
         _fgContext = nullptr;
 
     ReleaseObjects();
-    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyFGContextExit,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_fgContext),
-                      reinterpret_cast<uint64_t>(_swapChainContext), _frameCount, 0, 0, 0, 0,
-                      (_isActive ? 1u : 0u) | (IsPaused() ? 1u << 1 : 0u));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyFGContextExit, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext),
+                      _frameCount, 0, 0, 0, 0, (_isActive ? 1u : 0u) | (IsPaused() ? 1u << 1 : 0u));
 }
 
 bool XeFG_Dx12::Shutdown()
@@ -1987,8 +1980,8 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
 bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy)
 {
     XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseEnter,
-                      reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain), reinterpret_cast<uint64_t>(this),
-                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0,
+                      reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
+                      reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0,
                       _swapchainRecreationBlocked ? 1u : 0u, hwnd == _hwnd ? 1u : 0u);
     std::unique_lock lifecycleLock(_swapchainLifecycleMutex);
 
@@ -2015,13 +2008,11 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
             state.currentFGSwapchain = nullptr;
 
         LOG_DEBUG("[XeFG][Ownership] action = final_proxy_aliases_cleared, ptr = {:X}", (size_t) finalProxy);
-        XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseBefore,
-                          reinterpret_cast<uint64_t>(finalProxy), reinterpret_cast<uint64_t>(this),
-                          reinterpret_cast<uint64_t>(_swapChainContext));
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseBefore, reinterpret_cast<uint64_t>(finalProxy),
+                          reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext));
         releaseFinalProxy();
-        XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseAfter,
-                          reinterpret_cast<uint64_t>(finalProxy), reinterpret_cast<uint64_t>(this),
-                          reinterpret_cast<uint64_t>(_swapChainContext));
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseAfter, reinterpret_cast<uint64_t>(finalProxy),
+                          reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext));
         finalProxyReleased = true;
     };
 
@@ -2044,11 +2035,10 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
 
 bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy)
 {
-    XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedEnter,
-                      reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain), reinterpret_cast<uint64_t>(this),
-                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0,
-                      _swapchainReleaseInProgress.load(std::memory_order_relaxed) ? 1u : 0u,
-                      _swapchainRecreationBlocked ? 1u : 0u);
+    XeFGTrace::Record(
+        XeFGTrace::EventType::XeFGReleaseLockedEnter, reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
+        reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0,
+        _swapchainReleaseInProgress.load(std::memory_order_relaxed) ? 1u : 0u, _swapchainRecreationBlocked ? 1u : 0u);
     if (hwnd != _hwnd || _hwnd == NULL)
         return false;
 
