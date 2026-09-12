@@ -889,10 +889,16 @@ bool XeFG_Dx12::Shutdown()
 
 bool XeFG_Dx12::Dispatch()
 {
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), _frameCount, 0, 0, 0, 0, 0,
+                      static_cast<uint32_t>(_frameCount), static_cast<uint32_t>(_frameCount >> 32));
     LOG_FUNC();
 
     UINT64 willDispatchFrame = 0;
     auto fIndex = GetDispatchIndex(willDispatchFrame);
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterIndexResolve, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, willDispatchFrame, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex), static_cast<uint32_t>(willDispatchFrame));
     if (fIndex < 0)
         return false;
 
@@ -1012,11 +1018,23 @@ bool XeFG_Dx12::Dispatch()
 
     if (!_noHudless[fIndex])
     {
+        XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeHudlessLookup,
+                          reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0, 0,
+                          static_cast<uint32_t>(fIndex));
         auto res = &_frameResources[fIndex][FG_ResourceType::HudlessColor];
+        XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterHudlessLookup,
+                          reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(res),
+                          reinterpret_cast<uint64_t>(res->resource), 0, 0, 0, 0, 0,
+                          static_cast<uint32_t>(fIndex), static_cast<uint32_t>(res->validity));
         if (res->validity != FG_ResourceValidity::ValidNow)
         {
             res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
             res->frameIndex = fIndex;
+            XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeHudlessSetResource,
+                              reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(res),
+                              reinterpret_cast<uint64_t>(res->resource), reinterpret_cast<uint64_t>(res->cmdList), 0, 0,
+                              0, 0, static_cast<uint32_t>(fIndex), static_cast<uint32_t>(res->validity));
             SetResource(res);
         }
     }
@@ -1638,6 +1656,8 @@ bool XeFG_Dx12::Present()
 
 bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::SetResourceEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(inputResource));
     if (inputResource == nullptr || inputResource->resource == nullptr ||
         (inputResource->type != FG_ResourceType::UIColor && (!IsActive() || IsPaused())))
     {
@@ -1652,7 +1672,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
 
     auto& type = inputResource->type;
 
+    XeFGTrace::Record(XeFGTrace::EventType::SetResourceBeforeMutexWait, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(inputResource), reinterpret_cast<uint64_t>(inputResource->resource),
+                      static_cast<uint64_t>(fIndex), 0, 0, 0, 0, static_cast<uint32_t>(fIndex),
+                      static_cast<uint32_t>(type));
     std::unique_lock<std::shared_mutex> lock(_resourceMutex[fIndex]);
+    XeFGTrace::Record(XeFGTrace::EventType::SetResourceAfterMutexAcquire, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(inputResource), reinterpret_cast<uint64_t>(inputResource->resource),
+                      static_cast<uint64_t>(fIndex), 0, 0, 0, 0, static_cast<uint32_t>(fIndex),
+                      static_cast<uint32_t>(type));
 
     // This is mostly useful for cases where the user has manually set validity as ValidNow
     if (!inputResource->cmdList && inputResource->validity != FG_ResourceValidity::UntilPresent &&
@@ -1862,6 +1890,12 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
             (XeFGProxy::SetUiCompositionState() != nullptr || Config::Instance()->FGDrawUIOverFG.value_or_default()))
         {
             auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
+            XeFGTrace::Record(XeFGTrace::EventType::SetResourceBeforeTagFrameResource,
+                              reinterpret_cast<uint64_t>(_swapChainContext),
+                              reinterpret_cast<uint64_t>(fResource->cmdList),
+                              reinterpret_cast<uint64_t>(resourceParam.pResource), frameId, 0, 0, 0, 0,
+                              static_cast<uint32_t>(fIndex),
+                              (static_cast<uint32_t>(type) << 16) | static_cast<uint32_t>(fResource->validity));
             auto result =
                 XeFGProxy::D3D12TagFrameResource()(_swapChainContext, fResource->cmdList, frameId, &resourceParam);
             XeFGTrace::Record(XeFGTrace::EventType::XeFGTagFrameResourceResult,

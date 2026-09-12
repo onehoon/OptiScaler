@@ -42,6 +42,10 @@ EVENT_NAMES = {
     66: "UiFenceWaitResult", 67: "UiAllocatorResetResult", 68: "UiCommandListResetResult",
     69: "ScCommandListCloseResult", 70: "ScExecuteCommandListsBegin", 71: "ScExecuteCommandListsEnd",
     72: "ScAllocatorResetResult", 73: "ScCommandListResetResult",
+    74: "DispatchEnter", 75: "DispatchAfterIndexResolve", 76: "DispatchBeforeHudlessLookup",
+    77: "DispatchAfterHudlessLookup", 78: "DispatchBeforeHudlessSetResource", 79: "SetResourceEnter",
+    80: "SetResourceBeforeMutexWait", 81: "SetResourceAfterMutexAcquire",
+    82: "SetResourceBeforeTagFrameResource",
 }
 
 FLAG_NAMES = ((1, "skipResize"), (2, "skipResize1"), (4, "skipPresent"), (8, "skipPresent1"),
@@ -131,20 +135,21 @@ def write_output(trace: Trace, output_format: str) -> None:
 
 
 def self_test() -> None:
-    header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, 8, 1, 1000, 100, 5)
+    header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, 8, 1, 1000, 100, 6)
     records = bytearray(RECORD.size * 8)
     for sequence, event, result, aux0, aux1 in ((1, 1, 0, 0, 0), (2, 16, 0, 0, 0),
                                                 (3, 43, -7, 0, 0), (4, 49, -2147467260, 43, 1),
-                                                (5, 67, 0, 2, 0)):
+                                                (5, 67, 0, 2, 0), (6, 82, 0, 4, 0)):
         RECORD.pack_into(records, (sequence % 8) * RECORD.size, sequence, 100 + sequence, 0x10, 0x20, 0x30,
                          sequence, 42, event, 2, 99, result, 4, aux0, aux1)
     trace = parse_bytes(header + records)
-    assert [record[0] for record in trace.records] == [1, 2, 3, 4, 5]
+    assert [record[0] for record in trace.records] == [1, 2, 3, 4, 5, 6]
     decoded = list(rows(trace))
     assert decoded[2]["result"] == -7
     assert decoded[3]["failure_source_event"] == "XeFGSetEnabledResult"
     assert decoded[3]["e_abort"] == "yes"
     assert decoded[4]["event"] == "UiAllocatorResetResult"
+    assert decoded[5]["event"] == "SetResourceBeforeTagFrameResource"
     print("self-test: PASS")
 
 

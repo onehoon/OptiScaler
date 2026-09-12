@@ -84,6 +84,15 @@ enum class EventType : uint32_t
     ScExecuteCommandListsEnd,
     ScAllocatorResetResult,
     ScCommandListResetResult,
+    DispatchEnter,
+    DispatchAfterIndexResolve,
+    DispatchBeforeHudlessLookup,
+    DispatchAfterHudlessLookup,
+    DispatchBeforeHudlessSetResource,
+    SetResourceEnter,
+    SetResourceBeforeMutexWait,
+    SetResourceAfterMutexAcquire,
+    SetResourceBeforeTagFrameResource,
 };
 
 enum TraceFlagBits : uint32_t
