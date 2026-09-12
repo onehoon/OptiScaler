@@ -808,7 +808,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullsc
 #ifdef USE_LOCAL_MUTEX
         // dlssg calls this from present it seems
         // don't try to get a mutex when present owns it while dlssg mod is enabled
-        if (!(_localMutex.getOwner() == 4 && State::Instance().activeFgNvngx != FGNvngxReplacement::None))
+        if (!(_localMutex.isOwnedByCurrentThread(4) && State::Instance().activeFgNvngx != FGNvngxReplacement::None))
         {
             OwnedLockGuard lock(_localMutex, 3);
         }
@@ -817,7 +817,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullsc
         {
 
             if (State::Instance().currentFG != nullptr && State::Instance().currentFG->IsActive() &&
-                State::Instance().currentFG->Mutex.getOwner() != 3)
+                !State::Instance().currentFG->Mutex.isOwnedByCurrentThread(3))
             {
                 LOG_TRACE("Waiting ffxMutex 3, current: {}", State::Instance().currentFG->Mutex.getOwner());
                 State::Instance().currentFG->Mutex.lock(3);
@@ -864,7 +864,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
 #ifdef USE_LOCAL_MUTEX
     // dlssg calls this from present it seems
     // don't try to get a mutex when present owns it while dlssg mod is enabled
-    if (!(_localMutex.getOwner() == 4 && State::Instance().activeFgNvngx != FGNvngxReplacement::None))
+    if (!(_localMutex.isOwnedByCurrentThread(4) && State::Instance().activeFgNvngx != FGNvngxReplacement::None))
     {
         OwnedLockGuard lock(_localMutex, 1);
     }
@@ -1254,7 +1254,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
 #ifdef USE_LOCAL_MUTEX
     // dlssg calls this from present it seems
     // don't try to get a mutex when present owns it while dlssg mod is enabled
-    if (!(_localMutex.getOwner() == 4 && State::Instance().activeFgNvngx != FGNvngxReplacement::None))
+    if (!(_localMutex.isOwnedByCurrentThread(4) && State::Instance().activeFgNvngx != FGNvngxReplacement::None))
     {
         OwnedLockGuard lock(_localMutex, 2);
     }
