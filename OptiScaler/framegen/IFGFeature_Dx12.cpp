@@ -101,9 +101,8 @@ bool IFGFeature_Dx12::SubmitUICommandList(UINT index)
 
     auto closeResult = _uiCommandList[index]->Close();
     XeFGTrace::Record(XeFGTrace::EventType::UiCommandListCloseResult, 0,
-                      reinterpret_cast<uint64_t>(_uiCommandList[index]),
-                      reinterpret_cast<uint64_t>(_gameCommandQueue), _uiAllocatorFenceValues[index], 0, 0,
-                      static_cast<int32_t>(closeResult), 0, index);
+                      reinterpret_cast<uint64_t>(_uiCommandList[index]), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                      _uiAllocatorFenceValues[index], 0, 0, static_cast<int32_t>(closeResult), 0, index);
     if (FAILED(closeResult))
     {
         LOG_ERROR("_uiCommandList[{}]->Close() error: {:X}", index, (UINT) closeResult);
@@ -111,12 +110,10 @@ bool IFGFeature_Dx12::SubmitUICommandList(UINT index)
     }
 
     XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsBegin, 0,
-                      reinterpret_cast<uint64_t>(_gameCommandQueue),
-                      reinterpret_cast<uint64_t>(_uiCommandList[index]), _uiAllocatorFenceValues[index], 0, 0, 0, 0,
-                      index);
+                      reinterpret_cast<uint64_t>(_gameCommandQueue), reinterpret_cast<uint64_t>(_uiCommandList[index]),
+                      _uiAllocatorFenceValues[index], 0, 0, 0, 0, index);
     _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_uiCommandList[index]);
-    XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsEnd, 0,
-                      reinterpret_cast<uint64_t>(_gameCommandQueue),
+    XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsEnd, 0, reinterpret_cast<uint64_t>(_gameCommandQueue),
                       reinterpret_cast<uint64_t>(_uiCommandList[index]), _uiAllocatorFenceValues[index], 0, 0, 0, 0,
                       index);
     _uiCommandListResetted[index] = false;

@@ -9,8 +9,8 @@
 namespace
 {
 constexpr size_t kPathCapacity = 32768;
-constexpr size_t kTraceFileSize = sizeof(XeFGTrace::TraceHeader) +
-                                   sizeof(XeFGTrace::TraceRecord) * XeFGTrace::kTraceCapacity;
+constexpr size_t kTraceFileSize =
+    sizeof(XeFGTrace::TraceHeader) + sizeof(XeFGTrace::TraceRecord) * XeFGTrace::kTraceCapacity;
 
 std::atomic<LONG> g_state { 0 }; // 0 = unused, 1 = initializing, 2 = ready, 3 = stopped
 std::atomic<LONG> g_failureFlushed { 0 };
@@ -67,7 +67,7 @@ void CloseHandles() noexcept
         g_file = INVALID_HANDLE_VALUE;
     }
 }
-}
+} // namespace
 
 namespace XeFGTrace
 {
@@ -88,9 +88,9 @@ void Initialize() noexcept
     DeleteFileW(previousPath);
     MoveFileW(currentPath, previousPath);
 
-    g_file = CreateFileW(currentPath, GENERIC_READ | GENERIC_WRITE,
-                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
-                         FILE_ATTRIBUTE_NORMAL, nullptr);
+    g_file =
+        CreateFileW(currentPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (g_file == INVALID_HANDLE_VALUE)
     {
         g_state.store(3, std::memory_order_release);
@@ -158,8 +158,7 @@ void Shutdown() noexcept
 
 void FlushAfterFailureBestEffort() noexcept
 {
-    if (g_state.load(std::memory_order_acquire) != 2 ||
-        g_failureFlushed.exchange(1, std::memory_order_acq_rel) != 0)
+    if (g_state.load(std::memory_order_acquire) != 2 || g_failureFlushed.exchange(1, std::memory_order_acq_rel) != 0)
         return;
 
     if (g_view != nullptr)
@@ -168,8 +167,8 @@ void FlushAfterFailureBestEffort() noexcept
         FlushFileBuffers(g_file);
 }
 
-void RecordPrimaryFailureTrigger(EventType sourceEvent, uint64_t swapchain, uint64_t objectOrContext,
-                                 int32_t rawResult, uint32_t flagsSnapshot) noexcept
+void RecordPrimaryFailureTrigger(EventType sourceEvent, uint64_t swapchain, uint64_t objectOrContext, int32_t rawResult,
+                                 uint32_t flagsSnapshot) noexcept
 {
     if (rawResult >= 0 || g_state.load(std::memory_order_acquire) != 2 ||
         g_failureTriggered.exchange(1, std::memory_order_acq_rel) != 0)
@@ -180,15 +179,15 @@ void RecordPrimaryFailureTrigger(EventType sourceEvent, uint64_t swapchain, uint
     FlushAfterFailureBestEffort();
 }
 
-void Record(EventType eventType, uint64_t swapchain, uint64_t objectOrContext, uint64_t auxPointer,
-            uint64_t fenceValue, uint32_t mutexOwner, uint32_t mutexOwnerThread, int32_t result,
-            uint32_t flagsSnapshot, uint32_t aux0, uint32_t aux1) noexcept
+void Record(EventType eventType, uint64_t swapchain, uint64_t objectOrContext, uint64_t auxPointer, uint64_t fenceValue,
+            uint32_t mutexOwner, uint32_t mutexOwnerThread, int32_t result, uint32_t flagsSnapshot, uint32_t aux0,
+            uint32_t aux1) noexcept
 {
     if (g_state.load(std::memory_order_acquire) != 2 || g_header == nullptr || g_records == nullptr)
         return;
 
-    const auto sequence = static_cast<uint64_t>(
-        InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(&g_header->writeSequence)));
+    const auto sequence =
+        static_cast<uint64_t>(InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(&g_header->writeSequence)));
     TraceRecord& record = g_records[sequence % kTraceCapacity];
     InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&record.committedSequence), 0);
 
@@ -208,10 +207,9 @@ void Record(EventType eventType, uint64_t swapchain, uint64_t objectOrContext, u
     record.aux0 = aux0;
     record.aux1 = aux1;
     std::atomic_thread_fence(std::memory_order_release);
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&record.committedSequence),
-                           static_cast<LONG64>(sequence));
+    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&record.committedSequence), static_cast<LONG64>(sequence));
 
     if (eventType != EventType::PrimaryFailureTrigger && result < 0)
         RecordPrimaryFailureTrigger(eventType, swapchain, objectOrContext, result, flagsSnapshot);
 }
-}
+} // namespace XeFGTrace

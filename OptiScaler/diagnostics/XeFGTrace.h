@@ -174,21 +174,10 @@ void Initialize() noexcept;
 void Shutdown() noexcept;
 void FlushAfterFailureBestEffort() noexcept;
 
-void RecordPrimaryFailureTrigger(EventType sourceEvent,
-                                 uint64_t swapchain,
-                                 uint64_t objectOrContext,
-                                 int32_t rawResult,
+void RecordPrimaryFailureTrigger(EventType sourceEvent, uint64_t swapchain, uint64_t objectOrContext, int32_t rawResult,
                                  uint32_t flagsSnapshot) noexcept;
 
-void Record(EventType eventType,
-            uint64_t swapchain = 0,
-            uint64_t objectOrContext = 0,
-            uint64_t auxPointer = 0,
-            uint64_t fenceValue = 0,
-            uint32_t mutexOwner = 0,
-            uint32_t mutexOwnerThread = 0,
-            int32_t result = 0,
-            uint32_t flagsSnapshot = 0,
-            uint32_t aux0 = 0,
-            uint32_t aux1 = 0) noexcept;
-}
+void Record(EventType eventType, uint64_t swapchain = 0, uint64_t objectOrContext = 0, uint64_t auxPointer = 0,
+            uint64_t fenceValue = 0, uint32_t mutexOwner = 0, uint32_t mutexOwnerThread = 0, int32_t result = 0,
+            uint32_t flagsSnapshot = 0, uint32_t aux0 = 0, uint32_t aux1 = 0) noexcept;
+} // namespace XeFGTrace
