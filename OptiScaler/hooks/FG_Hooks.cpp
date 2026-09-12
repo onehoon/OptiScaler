@@ -20,6 +20,7 @@
 
 #include <d3d12.h>
 #include <detours/detours.h>
+#include <diagnostics/XeFGTrace.h>
 
 static ID3D12Fence* resizeFence = nullptr;
 static UINT64 resizeFenceValue = 0;
@@ -28,6 +29,27 @@ static IUnknown* oldSwapChain = nullptr;
 static ID3D12CommandQueue* currentCommandQueue = nullptr;
 static bool _forcedHdrForXeFG = false;
 static HANDLE _semaphore = nullptr;
+
+uint32_t FGHooks::TraceFlags()
+{
+    uint32_t flags = 0;
+    if (_skipResize)
+        flags |= XeFGTrace::SkipResize;
+    if (_skipResize1)
+        flags |= XeFGTrace::SkipResize1;
+    if (_skipPresent)
+        flags |= XeFGTrace::SkipPresent;
+    if (_skipPresent1)
+        flags |= XeFGTrace::SkipPresent1;
+
+    auto* fg = State::Instance().currentFG;
+    if (fg != nullptr)
+    {
+        flags |= XeFGTrace::XeFGActive * static_cast<uint32_t>(fg->IsActive());
+        flags |= XeFGTrace::XeFGPaused * static_cast<uint32_t>(fg->IsPaused());
+    }
+    return flags;
+}
 
 static bool CheckForFGStatus()
 {
@@ -80,6 +102,9 @@ static bool CheckForFGStatus()
         return false;
     }
 
+    if (State::Instance().activeFgOutput == FGOutput::XeFG)
+        XeFGTrace::Initialize();
+
     return true;
 }
 
@@ -122,6 +147,10 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
     IUnknown* previousFGSwapchain = State::Instance().currentFGSwapchain;
     bool scResult = false;
 
+    XeFGTrace::Record(XeFGTrace::EventType::SwapchainCreateBegin, reinterpret_cast<uint64_t>(previousFGSwapchain),
+                      reinterpret_cast<uint64_t>(pDevice), reinterpret_cast<uint64_t>(pFactory), 0, 0, 0, 0,
+                      TraceFlags());
+
     {
         ScopedSkipDxgiLoadChecks skipDxgiLoadChecks {};
 
@@ -154,14 +183,36 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
             {
                 LOG_DEBUG("Waiting for GPU to finish before resizing buffers");
 
+                XeFGTrace::Record(XeFGTrace::EventType::FenceSignalBegin,
+                                  reinterpret_cast<uint64_t>(previousFGSwapchain),
+                                  reinterpret_cast<uint64_t>(State::Instance().currentCommandQueue),
+                                  reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, 0, TraceFlags());
                 resizeFenceValue++;
-                State::Instance().currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+                HRESULT signalResult = State::Instance().currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+                XeFGTrace::Record(XeFGTrace::EventType::FenceSignalEnd,
+                                  reinterpret_cast<uint64_t>(previousFGSwapchain),
+                                  reinterpret_cast<uint64_t>(State::Instance().currentCommandQueue),
+                                  reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, signalResult,
+                                  TraceFlags());
+                if (FAILED(signalResult))
+                    XeFGTrace::FlushAfterFailureBestEffort();
 
                 if (resizeFence->GetCompletedValue() < resizeFenceValue)
                 {
-                    resizeFence->SetEventOnCompletion(resizeFenceValue, resizeFenceEvent);
+                    XeFGTrace::Record(XeFGTrace::EventType::FenceWaitBegin,
+                                      reinterpret_cast<uint64_t>(previousFGSwapchain),
+                                      reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0, 0,
+                                      TraceFlags());
+                    HRESULT eventResult = resizeFence->SetEventOnCompletion(resizeFenceValue, resizeFenceEvent);
                     // Max 5 sec
                     auto waitResult = WaitForSingleObject(resizeFenceEvent, 5000);
+                    XeFGTrace::Record(XeFGTrace::EventType::FenceWaitEnd,
+                                      reinterpret_cast<uint64_t>(previousFGSwapchain),
+                                      reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0,
+                                      static_cast<int32_t>(waitResult), TraceFlags(),
+                                      static_cast<uint32_t>(eventResult));
+                    if (FAILED(eventResult))
+                        XeFGTrace::FlushAfterFailureBestEffort();
                     LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
                 }
             }
@@ -171,6 +222,10 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
             oldSwapChain = nullptr;
 
         scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
+
+        XeFGTrace::Record(XeFGTrace::EventType::SwapchainCreateEnd, reinterpret_cast<uint64_t>(previousFGSwapchain),
+                          reinterpret_cast<uint64_t>(ppSwapChain != nullptr ? *ppSwapChain : nullptr),
+                          reinterpret_cast<uint64_t>(pFactory), 0, 0, 0, scResult ? S_OK : E_FAIL, TraceFlags());
 
         if (Config::Instance()->FGDontUseSwapchainBuffers.value_or_default())
             State::Instance().skipHeapCapture = false;
@@ -186,11 +241,20 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
         if (State::Instance().currentD3D12Device != nullptr)
         {
+            XeFGTrace::Record(XeFGTrace::EventType::FenceRecreateBegin, reinterpret_cast<uint64_t>(*ppSwapChain),
+                              reinterpret_cast<uint64_t>(State::Instance().currentD3D12Device),
+                              reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, 0, TraceFlags());
             SAFE_RELEASE(resizeFence);
             SAFE_CLOSE_HANDLE(resizeFenceEvent);
 
-            State::Instance().currentD3D12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&resizeFence));
+            HRESULT fenceResult =
+                State::Instance().currentD3D12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&resizeFence));
             resizeFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+            XeFGTrace::Record(XeFGTrace::EventType::FenceRecreateEnd, reinterpret_cast<uint64_t>(*ppSwapChain),
+                              reinterpret_cast<uint64_t>(resizeFence), reinterpret_cast<uint64_t>(resizeFenceEvent),
+                              resizeFenceValue, 0, 0, fenceResult, TraceFlags());
+            if (FAILED(fenceResult))
+                XeFGTrace::FlushAfterFailureBestEffort();
         }
 
         SetFGSwapchain(*ppSwapChain, pDesc->OutputWindow);
@@ -241,6 +305,10 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
     IUnknown* previousFGSwapchain = State::Instance().currentFGSwapchain;
     bool scResult = false;
 
+    XeFGTrace::Record(XeFGTrace::EventType::SwapchainCreate1Begin, reinterpret_cast<uint64_t>(previousFGSwapchain),
+                      reinterpret_cast<uint64_t>(pDevice), reinterpret_cast<uint64_t>(pFactory), 0, 0, 0, 0,
+                      TraceFlags());
+
     {
         ScopedSkipDxgiLoadChecks skipDxgiLoadChecks {};
 
@@ -274,14 +342,36 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
             {
                 LOG_DEBUG("Waiting for GPU to finish before resizing buffers");
 
+                XeFGTrace::Record(XeFGTrace::EventType::FenceSignalBegin,
+                                  reinterpret_cast<uint64_t>(previousFGSwapchain),
+                                  reinterpret_cast<uint64_t>(State::Instance().currentCommandQueue),
+                                  reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, 0, TraceFlags());
                 resizeFenceValue++;
-                State::Instance().currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+                HRESULT signalResult = State::Instance().currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+                XeFGTrace::Record(XeFGTrace::EventType::FenceSignalEnd,
+                                  reinterpret_cast<uint64_t>(previousFGSwapchain),
+                                  reinterpret_cast<uint64_t>(State::Instance().currentCommandQueue),
+                                  reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, signalResult,
+                                  TraceFlags());
+                if (FAILED(signalResult))
+                    XeFGTrace::FlushAfterFailureBestEffort();
 
                 if (resizeFence->GetCompletedValue() < resizeFenceValue)
                 {
-                    resizeFence->SetEventOnCompletion(resizeFenceValue, resizeFenceEvent);
+                    XeFGTrace::Record(XeFGTrace::EventType::FenceWaitBegin,
+                                      reinterpret_cast<uint64_t>(previousFGSwapchain),
+                                      reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0, 0,
+                                      TraceFlags());
+                    HRESULT eventResult = resizeFence->SetEventOnCompletion(resizeFenceValue, resizeFenceEvent);
                     // Max 5 sec
                     auto waitResult = WaitForSingleObject(resizeFenceEvent, 5000);
+                    XeFGTrace::Record(XeFGTrace::EventType::FenceWaitEnd,
+                                      reinterpret_cast<uint64_t>(previousFGSwapchain),
+                                      reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0,
+                                      static_cast<int32_t>(waitResult), TraceFlags(),
+                                      static_cast<uint32_t>(eventResult));
+                    if (FAILED(eventResult))
+                        XeFGTrace::FlushAfterFailureBestEffort();
                     LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
                 }
             }
@@ -291,6 +381,11 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
             oldSwapChain = nullptr;
 
         scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
+
+        XeFGTrace::Record(XeFGTrace::EventType::SwapchainCreate1End,
+                          reinterpret_cast<uint64_t>(previousFGSwapchain),
+                          reinterpret_cast<uint64_t>(ppSwapChain != nullptr ? *ppSwapChain : nullptr),
+                          reinterpret_cast<uint64_t>(pFactory), 0, 0, 0, scResult ? S_OK : E_FAIL, TraceFlags());
 
         if (Config::Instance()->FGDontUseSwapchainBuffers.value_or_default())
             State::Instance().skipHeapCapture = false;
@@ -306,11 +401,20 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
 
         if (State::Instance().currentD3D12Device != nullptr)
         {
+            XeFGTrace::Record(XeFGTrace::EventType::FenceRecreateBegin, reinterpret_cast<uint64_t>(*ppSwapChain),
+                              reinterpret_cast<uint64_t>(State::Instance().currentD3D12Device),
+                              reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, 0, TraceFlags());
             SAFE_RELEASE(resizeFence);
             SAFE_CLOSE_HANDLE(resizeFenceEvent);
 
-            State::Instance().currentD3D12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&resizeFence));
+            HRESULT fenceResult =
+                State::Instance().currentD3D12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&resizeFence));
             resizeFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+            XeFGTrace::Record(XeFGTrace::EventType::FenceRecreateEnd, reinterpret_cast<uint64_t>(*ppSwapChain),
+                              reinterpret_cast<uint64_t>(resizeFence), reinterpret_cast<uint64_t>(resizeFenceEvent),
+                              resizeFenceValue, 0, 0, fenceResult, TraceFlags());
+            if (FAILED(fenceResult))
+                XeFGTrace::FlushAfterFailureBestEffort();
         }
 
         SetFGSwapchain((IDXGISwapChain*) *ppSwapChain, hWnd);
@@ -588,36 +692,68 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
 HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat,
                                  UINT SwapChainFlags)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::ResizeEnter, reinterpret_cast<uint64_t>(This), 0, 0, resizeFenceValue,
+                      0, 0, 0, TraceFlags(), BufferCount, Width);
+
     // Skip XeFG's internal call
     if (_skipResize)
     {
         LOG_DEBUG("XeFG call skipping");
+        XeFGTrace::Record(XeFGTrace::EventType::ResizeInternalBypass, reinterpret_cast<uint64_t>(This), 0, 0,
+                          resizeFenceValue, 0, 0, 0, TraceFlags());
         _skipResize = false;
 
         IDXGISwapChain* sc = nullptr;
 
         if (sc != nullptr)
         {
+            XeFGTrace::Record(XeFGTrace::EventType::ResizeDxgiBegin, reinterpret_cast<uint64_t>(This));
             auto result = sc->ResizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags);
+            XeFGTrace::Record(XeFGTrace::EventType::ResizeDxgiEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                              result, TraceFlags());
             LOG_DEBUG("XeFG internal ResizeBuffers result: {:X}", (UINT) result);
+            if (FAILED(result))
+                XeFGTrace::FlushAfterFailureBestEffort();
             return result;
         }
 
-        return o_FGSCResizeBuffers(This, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+        XeFGTrace::Record(XeFGTrace::EventType::ResizeDxgiBegin, reinterpret_cast<uint64_t>(This));
+        auto result = o_FGSCResizeBuffers(This, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+        XeFGTrace::Record(XeFGTrace::EventType::ResizeDxgiEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                          result, TraceFlags());
+        if (FAILED(result))
+            XeFGTrace::FlushAfterFailureBestEffort();
+        return result;
     }
 
     if (State::Instance().currentCommandQueue != nullptr && resizeFence != nullptr && resizeFenceEvent != nullptr)
     {
         LOG_DEBUG("Waiting for GPU to finish before resizing buffers");
 
+        XeFGTrace::Record(XeFGTrace::EventType::FenceSignalBegin, reinterpret_cast<uint64_t>(This),
+                          reinterpret_cast<uint64_t>(State::Instance().currentCommandQueue),
+                          reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, 0, TraceFlags());
         resizeFenceValue++;
-        State::Instance().currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+        HRESULT signalResult = State::Instance().currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+        XeFGTrace::Record(XeFGTrace::EventType::FenceSignalEnd, reinterpret_cast<uint64_t>(This),
+                          reinterpret_cast<uint64_t>(State::Instance().currentCommandQueue),
+                          reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, signalResult, TraceFlags());
+        if (FAILED(signalResult))
+            XeFGTrace::FlushAfterFailureBestEffort();
 
         if (resizeFence->GetCompletedValue() < resizeFenceValue)
         {
-            resizeFence->SetEventOnCompletion(resizeFenceValue, resizeFenceEvent);
+            XeFGTrace::Record(XeFGTrace::EventType::FenceWaitBegin, reinterpret_cast<uint64_t>(This),
+                              reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0, 0,
+                              TraceFlags());
+            HRESULT eventResult = resizeFence->SetEventOnCompletion(resizeFenceValue, resizeFenceEvent);
             // Max 5 sec
             auto waitResult = WaitForSingleObject(resizeFenceEvent, 5000);
+            XeFGTrace::Record(XeFGTrace::EventType::FenceWaitEnd, reinterpret_cast<uint64_t>(This),
+                              reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0,
+                              static_cast<int32_t>(waitResult), TraceFlags(), static_cast<uint32_t>(eventResult));
+            if (FAILED(eventResult))
+                XeFGTrace::FlushAfterFailureBestEffort();
             LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
         }
     }
@@ -740,7 +876,11 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
     HRESULT result;
     {
         ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
+        XeFGTrace::Record(XeFGTrace::EventType::ResizeDxgiBegin, reinterpret_cast<uint64_t>(This), 0, 0,
+                          resizeFenceValue, 0, 0, 0, TraceFlags());
         result = o_FGSCResizeBuffers(This, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+        XeFGTrace::Record(XeFGTrace::EventType::ResizeDxgiEnd, reinterpret_cast<uint64_t>(This), 0, 0,
+                          resizeFenceValue, 0, 0, result, TraceFlags());
     }
 
     _skipResize1 = false;
@@ -799,39 +939,65 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
 HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format,
                                   UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::Resize1Enter, reinterpret_cast<uint64_t>(This), 0, 0, resizeFenceValue,
+                      0, 0, 0, TraceFlags(), BufferCount, Width);
+
     // Skip XeFG's internal call
     if (_skipResize1)
     {
         LOG_DEBUG("XeFG call skipping");
+        XeFGTrace::Record(XeFGTrace::EventType::Resize1InternalBypass, reinterpret_cast<uint64_t>(This), 0, 0,
+                          resizeFenceValue, 0, 0, 0, TraceFlags());
         _skipResize1 = false;
 
         IDXGISwapChain3* sc = nullptr;
 
         if (sc != nullptr)
         {
+            XeFGTrace::Record(XeFGTrace::EventType::Resize1DxgiBegin, reinterpret_cast<uint64_t>(This));
             auto result = sc->ResizeBuffers1(BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask,
                                              ppPresentQueue);
+            XeFGTrace::Record(XeFGTrace::EventType::Resize1DxgiEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                              result, TraceFlags());
 
             LOG_DEBUG("XeFG internal ResizeBuffers1 result: {:X}", (UINT) result);
             return result;
         }
 
-        return o_FGSCResizeBuffers1(This, BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask,
-                                    ppPresentQueue);
+        XeFGTrace::Record(XeFGTrace::EventType::Resize1DxgiBegin, reinterpret_cast<uint64_t>(This));
+        auto result = o_FGSCResizeBuffers1(This, BufferCount, Width, Height, Format, SwapChainFlags,
+                                           pCreationNodeMask, ppPresentQueue);
+        XeFGTrace::Record(XeFGTrace::EventType::Resize1DxgiEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                          result, TraceFlags());
+        if (FAILED(result))
+            XeFGTrace::FlushAfterFailureBestEffort();
+        return result;
     }
 
     if (State::Instance().currentCommandQueue != nullptr && resizeFence != nullptr && resizeFenceEvent != nullptr)
     {
         LOG_DEBUG("Waiting for GPU to finish before resizing buffers");
 
+        XeFGTrace::Record(XeFGTrace::EventType::FenceSignalBegin, reinterpret_cast<uint64_t>(This),
+                          reinterpret_cast<uint64_t>(State::Instance().currentCommandQueue),
+                          reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, 0, TraceFlags());
         resizeFenceValue++;
-        State::Instance().currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+        HRESULT signalResult = State::Instance().currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+        XeFGTrace::Record(XeFGTrace::EventType::FenceSignalEnd, reinterpret_cast<uint64_t>(This),
+                          reinterpret_cast<uint64_t>(State::Instance().currentCommandQueue),
+                          reinterpret_cast<uint64_t>(resizeFence), resizeFenceValue, 0, 0, signalResult, TraceFlags());
 
         if (resizeFence->GetCompletedValue() < resizeFenceValue)
         {
-            resizeFence->SetEventOnCompletion(resizeFenceValue, resizeFenceEvent);
+            XeFGTrace::Record(XeFGTrace::EventType::FenceWaitBegin, reinterpret_cast<uint64_t>(This),
+                              reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0, 0,
+                              TraceFlags());
+            HRESULT eventResult = resizeFence->SetEventOnCompletion(resizeFenceValue, resizeFenceEvent);
             // Max 5 sec
             auto waitResult = WaitForSingleObject(resizeFenceEvent, 5000);
+            XeFGTrace::Record(XeFGTrace::EventType::FenceWaitEnd, reinterpret_cast<uint64_t>(This),
+                              reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0,
+                              static_cast<int32_t>(waitResult), TraceFlags(), static_cast<uint32_t>(eventResult));
             LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
         }
     }
@@ -951,8 +1117,12 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
         ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
         _skipResize = true;
 
+        XeFGTrace::Record(XeFGTrace::EventType::Resize1DxgiBegin, reinterpret_cast<uint64_t>(This), 0, 0,
+                          resizeFenceValue, 0, 0, 0, TraceFlags());
         result = o_FGSCResizeBuffers1(This, BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask,
                                       ppPresentQueue);
+        XeFGTrace::Record(XeFGTrace::EventType::Resize1DxgiEnd, reinterpret_cast<uint64_t>(This), 0, 0,
+                          resizeFenceValue, 0, 0, result, TraceFlags());
 
         _skipResize = false;
     }
@@ -990,10 +1160,15 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
 
 HRESULT FGHooks::hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::PresentEnter, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0, 0,
+                      TraceFlags(), SyncInterval, Flags);
+
     // Skip XeFG's internal call
     if (_skipPresent)
     {
         LOG_DEBUG("XeFG call skipping");
+        XeFGTrace::Record(XeFGTrace::EventType::PresentInternalBypass, reinterpret_cast<uint64_t>(This), 0, 0, 0,
+                          0, 0, 0, TraceFlags(), SyncInterval, Flags);
 
         IDXGISwapChain* sc = nullptr;
 
@@ -1001,23 +1176,35 @@ HRESULT FGHooks::hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags
 
         if (sc != nullptr)
         {
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresentBegin, reinterpret_cast<uint64_t>(This));
             result = sc->Present(SyncInterval, Flags);
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresentEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                              result, TraceFlags());
             LOG_DEBUG("sc->Present result: {:X}", (UINT) result);
         }
         else
         {
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresentBegin, reinterpret_cast<uint64_t>(This));
             result = o_FGSCPresent(This, SyncInterval, Flags);
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresentEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                              result, TraceFlags());
             LOG_DEBUG("o_FGSCPresent result: {:X}", (UINT) result);
         }
 
+        if (FAILED(result))
+            XeFGTrace::FlushAfterFailureBestEffort();
         return result;
     }
 
     LOG_DEBUG("SyncInterval: {}, Flags: {:X}", SyncInterval, Flags);
 
+    XeFGTrace::Record(XeFGTrace::EventType::PresentDispatchBegin, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                      0, TraceFlags());
     _skipPresent1 = true;
     auto result = FGPresent(This, SyncInterval, Flags, nullptr);
     _skipPresent1 = false;
+    XeFGTrace::Record(XeFGTrace::EventType::PresentDispatchEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                      result, TraceFlags());
 
     return result;
 }
@@ -1025,10 +1212,15 @@ HRESULT FGHooks::hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags
 HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Flags,
                               const DXGI_PRESENT_PARAMETERS* pPresentParameters)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::Present1Enter, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0, 0,
+                      TraceFlags(), SyncInterval, Flags);
+
     // Skip XeFG's internal call
     if (_skipPresent1)
     {
         LOG_DEBUG("XeFG call skipping");
+        XeFGTrace::Record(XeFGTrace::EventType::Present1InternalBypass, reinterpret_cast<uint64_t>(This), 0, 0, 0,
+                          0, 0, 0, TraceFlags(), SyncInterval, Flags);
 
         IDXGISwapChain3* sc = nullptr;
 
@@ -1036,22 +1228,34 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
 
         if (sc != nullptr)
         {
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1Begin, reinterpret_cast<uint64_t>(This));
             result = sc->Present1(SyncInterval, Flags, pPresentParameters);
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1End, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0,
+                              0, result, TraceFlags());
             LOG_DEBUG("sc->Present result: {:X}", (UINT) result);
         }
         else
         {
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1Begin, reinterpret_cast<uint64_t>(This));
             result = o_FGSCPresent1(This, SyncInterval, Flags, pPresentParameters);
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1End, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0,
+                              0, result, TraceFlags());
             LOG_DEBUG("o_FGSCPresent result: {:X}", (UINT) result);
         }
 
+        if (FAILED(result))
+            XeFGTrace::FlushAfterFailureBestEffort();
         return result;
     }
 
     LOG_DEBUG("SyncInterval: {}, Flags: {:X}", SyncInterval, Flags);
+    XeFGTrace::Record(XeFGTrace::EventType::PresentDispatchBegin, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                      0, TraceFlags());
     _skipPresent = true;
     auto result = FGPresent(This, SyncInterval, Flags, pPresentParameters);
     _skipPresent = false;
+    XeFGTrace::Record(XeFGTrace::EventType::PresentDispatchEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                      result, TraceFlags());
 
     return result;
 }
@@ -1138,13 +1342,30 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
     }
 
     bool mutexUsed = false;
-    if (willPresent && fg != nullptr && fg->IsActive() && !fg->IsPaused() &&
-        config->FGUseMutexForSwapchain.value_or_default() && !fg->Mutex.isOwnedByCurrentThread(2))
+    const bool mutexCandidate = willPresent && fg != nullptr && fg->IsActive() && !fg->IsPaused() &&
+                                config->FGUseMutexForSwapchain.value_or_default();
+    const bool mutexOwnerCurrent = mutexCandidate && fg->Mutex.isOwnedByCurrentThread(2);
+    XeFGTrace::Record(XeFGTrace::EventType::PresentMutexDecision, reinterpret_cast<uint64_t>(This),
+                      reinterpret_cast<uint64_t>(fg), 0, 0, fg != nullptr ? fg->Mutex.getOwner() : 0,
+                      fg != nullptr ? fg->Mutex.getOwnerThread() : 0, mutexCandidate ? 1 : 0, TraceFlags());
+    if (mutexCandidate && !mutexOwnerCurrent)
     {
         LOG_TRACE("Waiting FG->Mutex 2, current: {}", fg->Mutex.getOwner());
+        XeFGTrace::Record(XeFGTrace::EventType::PresentMutexWaitBegin, reinterpret_cast<uint64_t>(This),
+                          reinterpret_cast<uint64_t>(fg), 0, 0, fg->Mutex.getOwner(), fg->Mutex.getOwnerThread(), 0,
+                          TraceFlags());
         fg->Mutex.lock(2);
         mutexUsed = true;
+        XeFGTrace::Record(XeFGTrace::EventType::PresentMutexAcquired, reinterpret_cast<uint64_t>(This),
+                          reinterpret_cast<uint64_t>(fg), 0, 0, fg->Mutex.getOwner(), fg->Mutex.getOwnerThread(), 0,
+                          TraceFlags());
         LOG_TRACE("Accuired FG->Mutex: {}", fg->Mutex.getOwner());
+    }
+    else if (mutexOwnerCurrent)
+    {
+        XeFGTrace::Record(XeFGTrace::EventType::PresentMutexSameThreadBypass, reinterpret_cast<uint64_t>(This),
+                          reinterpret_cast<uint64_t>(fg), 0, 0, fg->Mutex.getOwner(), fg->Mutex.getOwnerThread(), 0,
+                          TraceFlags());
     }
 
     const bool fgFeatureActive = fg != nullptr && fg->IsActive() && !fg->IsPaused();
@@ -1226,9 +1447,22 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
 
     HRESULT result;
     if (pPresentParameters == nullptr)
+    {
+        XeFGTrace::Record(XeFGTrace::EventType::DxgiPresentBegin, reinterpret_cast<uint64_t>(This));
         result = o_FGSCPresent(This, SyncInterval, Flags);
+        XeFGTrace::Record(XeFGTrace::EventType::DxgiPresentEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                          result, TraceFlags());
+    }
     else
+    {
+        XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1Begin, reinterpret_cast<uint64_t>(This));
         result = o_FGSCPresent1((IDXGISwapChain1*) This, SyncInterval, Flags, pPresentParameters);
+        XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1End, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                          result, TraceFlags());
+    }
+
+    if (FAILED(result))
+        XeFGTrace::FlushAfterFailureBestEffort();
 
     if (result == S_OK)
     {
@@ -1270,6 +1504,9 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
     if (mutexUsed && fg != nullptr)
     {
         LOG_TRACE("Releasing FG->Mutex: {}", fg->Mutex.getOwner());
+        XeFGTrace::Record(XeFGTrace::EventType::PresentMutexUnlock, reinterpret_cast<uint64_t>(This),
+                          reinterpret_cast<uint64_t>(fg), 0, 0, fg->Mutex.getOwner(), fg->Mutex.getOwnerThread(), 0,
+                          TraceFlags());
         fg->Mutex.unlockThis(2);
     }
 
@@ -1280,6 +1517,9 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
 
 ULONG FGHooks::hkFGRelease(IUnknown* This)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::SwapchainReleaseEnter, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                      0, TraceFlags());
+
     // We already released this one, prevent crashes
     if (This == oldSwapChain)
     {
@@ -1312,6 +1552,9 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
         const auto releaseResult = o_FGRelease(This);
         if (releaseResult == 1)
         {
+            XeFGTrace::Record(XeFGTrace::EventType::SwapchainReleaseLifecycleBegin,
+                              reinterpret_cast<uint64_t>(This), reinterpret_cast<uint64_t>(state.currentFG), 0, 0,
+                              0, 0, static_cast<int32_t>(releaseResult), TraceFlags());
             LOG_DEBUG("");
 
             if (State::Instance().currentCommandQueue != nullptr && resizeFence != nullptr &&
@@ -1347,12 +1590,18 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 {
                     releaseSucceeded = State::Instance().currentFG->ReleaseSwapchain(_hwnd);
                 }
+                XeFGTrace::Record(XeFGTrace::EventType::SwapchainFinalProxyRelease,
+                                  reinterpret_cast<uint64_t>(This), reinterpret_cast<uint64_t>(state.currentFG), 0, 0,
+                                  0, 0, releaseSucceeded ? S_OK : E_FAIL, TraceFlags());
             }
 
             if (!releaseSucceeded)
             {
                 skipReleaseChecks = false;
                 LOG_ERROR("[XeFG][Lifecycle] action = fg_release_aborted, reason = release_swapchain_failed");
+                XeFGTrace::Record(XeFGTrace::EventType::SwapchainReleaseLifecycleEnd,
+                                  reinterpret_cast<uint64_t>(This), reinterpret_cast<uint64_t>(state.currentFG), 0, 0,
+                                  0, 0, E_FAIL, TraceFlags());
                 return 0;
             }
 
@@ -1360,6 +1609,9 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
             state.currentFGSwapchain = nullptr;
 
             skipReleaseChecks = false;
+
+            XeFGTrace::Record(XeFGTrace::EventType::SwapchainReleaseLifecycleEnd,
+                              reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0, S_OK, TraceFlags());
 
             return 0;
         }

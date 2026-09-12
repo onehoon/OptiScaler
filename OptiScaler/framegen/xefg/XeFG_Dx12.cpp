@@ -9,6 +9,7 @@
 #include <magic_enum.hpp>
 
 #include <DirectXMath.h>
+#include <diagnostics/XeFGTrace.h>
 
 using namespace DirectX;
 
@@ -68,6 +69,11 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
     do
     {
         auto result = XeFGProxy::D3D12CreateContext()(device, &_swapChainContext);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGCreateContextResult, 0,
+                          reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(device), 0, 0, 0,
+                          static_cast<int32_t>(result));
+        if (static_cast<int32_t>(result) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
 
         if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
@@ -203,8 +209,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
     _swapChainContext = nullptr;
 
     LOG_INFO("[XeFG][Lifecycle] action = destroy_begin, context = {:X}", (size_t) context);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyBegin, 0, reinterpret_cast<uint64_t>(context));
 
     auto result = XeFGProxy::Destroy()(context);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyResult, 0, reinterpret_cast<uint64_t>(context), 0, 0, 0, 0,
+                      static_cast<int32_t>(result));
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
 
     LOG_INFO("[XeFG][Lifecycle] action = destroy_return, context = {:X}, result = {} ({})", (size_t) context,
              magic_enum::enum_name(result), static_cast<int32_t>(result));
@@ -471,6 +482,11 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     xefg_swapchain_result_t result;
     result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                      &params);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGInitSwapchainResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(realQueue), 0, 0, 0,
+                      static_cast<int32_t>(result));
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
 
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
@@ -480,6 +496,11 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 
     IDXGISwapChain* queriedSwapChain = nullptr;
     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(&queriedSwapChain));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGGetSwapchainPtrResult,
+                      reinterpret_cast<uint64_t>(queriedSwapChain), reinterpret_cast<uint64_t>(_swapChainContext), 0,
+                      0, 0, 0, static_cast<int32_t>(result));
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("D3D12GetSwapChainPtr", result);
@@ -493,7 +514,12 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
     if (State::Instance().activeFgInput == FGInput::ForceXeLL)
     {
-        XeFGProxy::SetEnabled()(_swapChainContext, true);
+        auto enabledResult = XeFGProxy::SetEnabled()(_swapChainContext, true);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetEnabledResult, reinterpret_cast<uint64_t>(*swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                          static_cast<int32_t>(enabledResult), 0, 1);
+        if (static_cast<int32_t>(enabledResult) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
     }
 
     _gameCommandQueue = realQueue;
@@ -650,6 +676,11 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 #endif // !DONT_USE_XMX
         result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, desc, pFullscreenDesc, realQueue,
                                                          factory12, &params);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGInitSwapchainResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(realQueue), 0, 0,
+                          0, static_cast<int32_t>(result));
+        if (static_cast<int32_t>(result) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
     }
 
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
@@ -660,6 +691,11 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
     IDXGISwapChain1* queriedSwapChain = nullptr;
     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(&queriedSwapChain));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGGetSwapchainPtrResult,
+                      reinterpret_cast<uint64_t>(queriedSwapChain), reinterpret_cast<uint64_t>(_swapChainContext), 0,
+                      0, 0, 0, static_cast<int32_t>(result));
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("D3D12GetSwapChainPtr", result);
@@ -673,7 +709,12 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
     if (State::Instance().activeFgInput == FGInput::ForceXeLL)
     {
-        XeFGProxy::SetEnabled()(_swapChainContext, true);
+        auto enabledResult = XeFGProxy::SetEnabled()(_swapChainContext, true);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetEnabledResult, reinterpret_cast<uint64_t>(*swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                          static_cast<int32_t>(enabledResult), 0, 1);
+        if (static_cast<int32_t>(enabledResult) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
     }
 
     _gameCommandQueue = realQueue;
@@ -719,6 +760,11 @@ void XeFG_Dx12::Activate()
          Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
     {
         auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetEnabledResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result), 0,
+                          1);
+        if (static_cast<int32_t>(result) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
 
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
@@ -760,6 +806,11 @@ void XeFG_Dx12::Deactivate()
         if (_swapChainContext != nullptr)
         {
             result = XeFGProxy::SetEnabled()(_swapChainContext, false);
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGSetEnabledResult, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                              static_cast<int32_t>(result), 0, 0);
+            if (static_cast<int32_t>(result) < 0)
+                XeFGTrace::FlushAfterFailureBestEffort();
             if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
                 _isActive = false;
         }
@@ -846,6 +897,12 @@ bool XeFG_Dx12::Dispatch()
 
         auto uiResult = XeFGProxy::SetUiCompositionState()(_swapChainContext, uiState);
 
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetUiCompositionResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(uiResult), 0,
+                          static_cast<uint32_t>(uiState));
+        if (static_cast<int32_t>(uiResult) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
+
         LogXeFGResult("SetUiCompositionState", uiResult);
     }
 
@@ -871,6 +928,13 @@ bool XeFG_Dx12::Dispatch()
 
             auto intResult = XeFGProxy::SetNumInterpolatedFrames()(
                 _swapChainContext, Config::Instance()->FGXeFGInterpolationCount.value_or_default());
+
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGSetNumInterpolatedFramesResult,
+                              reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext), 0,
+                              0, 0, 0, static_cast<int32_t>(intResult), 0,
+                              static_cast<uint32_t>(Config::Instance()->FGXeFGInterpolationCount.value_or_default()));
+            if (static_cast<int32_t>(intResult) < 0)
+                XeFGTrace::FlushAfterFailureBestEffort();
 
             _framesToInterpolate = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
 
@@ -1019,6 +1083,11 @@ bool XeFG_Dx12::Dispatch()
     auto frameId = static_cast<uint32_t>(willDispatchFrame);
 
     auto result = XeFGProxy::TagFrameConstants()(_swapChainContext, frameId, &constData);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGTagFrameConstantsResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result), 0,
+                      frameId);
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("TagFrameConstants", result);
@@ -1031,6 +1100,11 @@ bool XeFG_Dx12::Dispatch()
     }
 
     result = XeFGProxy::SetPresentId()(_swapChainContext, frameId);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGSetPresentIdResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result), 0,
+                      frameId);
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("SetPresentId", result);
@@ -1081,6 +1155,11 @@ bool XeFG_Dx12::Dispatch()
                                     (UINT) Config::Instance()->FGRectHeight.value_or(_interpolationHeight[fIndex]) };
 
         result = XeFGProxy::D3D12TagFrameResource()(_swapChainContext, (ID3D12CommandList*) 1, frameId, &backbuffer);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGTagFrameResourceResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(backbuffer.pResource),
+                          0, 0, 0, static_cast<int32_t>(result), 0, frameId);
+        if (static_cast<int32_t>(result) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
 
         if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
@@ -1681,6 +1760,12 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
             auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
             auto result =
                 XeFGProxy::D3D12TagFrameResource()(_swapChainContext, fResource->cmdList, frameId, &resourceParam);
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGTagFrameResourceResult,
+                              reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
+                              reinterpret_cast<uint64_t>(resourceParam.pResource), 0, 0, 0,
+                              static_cast<int32_t>(result), 0, frameId);
+            if (static_cast<int32_t>(result) < 0)
+                XeFGTrace::FlushAfterFailureBestEffort();
             LOG_DEBUG("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,
                       magic_enum::enum_name(type), magic_enum::enum_name(result), (int32_t) result);
 
