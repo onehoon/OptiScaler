@@ -802,13 +802,34 @@ void XeFG_Dx12::Deactivate()
         {
             LOG_DEBUG("Executing _uiCommandList[fIndex][{}]: {:X}", fIndex, (size_t) _uiCommandList[fIndex]);
             auto closeResult = _uiCommandList[fIndex]->Close();
+            XeFGTrace::Record(XeFGTrace::EventType::UiCommandListCloseResult,
+                              reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_uiCommandList[fIndex]),
+                              reinterpret_cast<uint64_t>(_gameCommandQueue), _uiAllocatorFenceValues[fIndex], 0, 0,
+                              static_cast<int32_t>(closeResult), 0, static_cast<uint32_t>(fIndex));
 
             if (closeResult == S_OK)
+            {
+                XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsBegin,
+                                  reinterpret_cast<uint64_t>(_swapChain),
+                                  reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_uiCommandList[fIndex]), _uiAllocatorFenceValues[fIndex],
+                                  0, 0, 0, 0, static_cast<uint32_t>(fIndex));
                 _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_uiCommandList[fIndex]);
+                XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsEnd,
+                                  reinterpret_cast<uint64_t>(_swapChain),
+                                  reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_uiCommandList[fIndex]), _uiAllocatorFenceValues[fIndex],
+                                  0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+            }
             else
                 LOG_ERROR("_uiCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
 
-            _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[fIndex]);
+            auto signalResult = _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[fIndex]);
+            XeFGTrace::Record(XeFGTrace::EventType::UiQueueSignalResult,
+                              reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_uiFence),
+                              reinterpret_cast<uint64_t>(_gameCommandQueue), _uiAllocatorFenceValues[fIndex], 0, 0,
+                              static_cast<int32_t>(signalResult), 0, static_cast<uint32_t>(fIndex));
 
             _uiCommandListResetted[fIndex] = false;
         }
@@ -1440,6 +1461,12 @@ bool XeFG_Dx12::Present()
 {
     auto fIndex = GetIndexWillBeDispatched();
     LOG_DEBUG("fIndex: {}", fIndex);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentBeforeUiWork, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
 
     if (Config::Instance()->FGDrawUIOverFG.value_or_default())
     {
@@ -1474,6 +1501,13 @@ bool XeFG_Dx12::Present()
             LOG_WARN("UI resource is nullptr");
         }
     }
+
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentAfterUiWork, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentBeforeScWork, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
 
     if (IsActive() && !IsPaused())
     {
@@ -1515,13 +1549,34 @@ bool XeFG_Dx12::Present()
         {
             LOG_DEBUG("Executing _uiCommandList[{}]: {:X}", fIndex, (size_t) _uiCommandList[fIndex]);
             auto closeResult = _uiCommandList[fIndex]->Close();
+            XeFGTrace::Record(XeFGTrace::EventType::UiCommandListCloseResult,
+                              reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_uiCommandList[fIndex]),
+                              reinterpret_cast<uint64_t>(_gameCommandQueue), _uiAllocatorFenceValues[fIndex], 0, 0,
+                              static_cast<int32_t>(closeResult), 0, static_cast<uint32_t>(fIndex));
 
             if (closeResult == S_OK)
+            {
+                XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsBegin,
+                                  reinterpret_cast<uint64_t>(_swapChain),
+                                  reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_uiCommandList[fIndex]), _uiAllocatorFenceValues[fIndex],
+                                  0, 0, 0, 0, static_cast<uint32_t>(fIndex));
                 _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_uiCommandList[fIndex]);
+                XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsEnd,
+                                  reinterpret_cast<uint64_t>(_swapChain),
+                                  reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_uiCommandList[fIndex]), _uiAllocatorFenceValues[fIndex],
+                                  0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+            }
             else
                 LOG_ERROR("_uiCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
 
-            _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[fIndex]);
+            auto signalResult = _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[fIndex]);
+            XeFGTrace::Record(XeFGTrace::EventType::UiQueueSignalResult,
+                              reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_uiFence),
+                              reinterpret_cast<uint64_t>(_gameCommandQueue), _uiAllocatorFenceValues[fIndex], 0, 0,
+                              static_cast<int32_t>(signalResult), 0, static_cast<uint32_t>(fIndex));
 
             _uiCommandListResetted[fIndex] = false;
         }
@@ -1530,15 +1585,36 @@ bool XeFG_Dx12::Present()
         {
             LOG_DEBUG("Executing _scCommandList[{}]: {:X}", fIndex, (size_t) _scCommandList[fIndex]);
             auto closeResult = _scCommandList[fIndex]->Close();
+            XeFGTrace::Record(XeFGTrace::EventType::ScCommandListCloseResult,
+                              reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_scCommandList[fIndex]),
+                              reinterpret_cast<uint64_t>(_gameCommandQueue), 0, 0, 0,
+                              static_cast<int32_t>(closeResult), 0, static_cast<uint32_t>(fIndex));
 
             if (closeResult == S_OK)
+            {
+                XeFGTrace::Record(XeFGTrace::EventType::ScExecuteCommandListsBegin,
+                                  reinterpret_cast<uint64_t>(_swapChain),
+                                  reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_scCommandList[fIndex]), 0, 0, 0, 0, 0,
+                                  static_cast<uint32_t>(fIndex));
                 _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_scCommandList[fIndex]);
+                XeFGTrace::Record(XeFGTrace::EventType::ScExecuteCommandListsEnd,
+                                  reinterpret_cast<uint64_t>(_swapChain),
+                                  reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_scCommandList[fIndex]), 0, 0, 0, 0, 0,
+                                  static_cast<uint32_t>(fIndex));
+            }
             else
                 LOG_ERROR("_scCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
 
             _scCommandListResetted[fIndex] = false;
         }
     }
+
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentAfterScWork, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
 
     if ((_fgFramePresentId - _lastFGFramePresentId) > 3 && IsActive() && !_waitingNewFrameData)
     {
@@ -1550,7 +1626,14 @@ bool XeFG_Dx12::Present()
 
     _fgFramePresentId++;
 
-    return Dispatch();
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentBeforeDispatch, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    const auto dispatchResult = Dispatch();
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentAfterDispatch, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex), dispatchResult ? 1u : 0u);
+    return dispatchResult;
 }
 
 bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)

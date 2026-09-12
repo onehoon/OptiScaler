@@ -35,6 +35,13 @@ EVENT_NAMES = {
     47: "XeFGSetNumInterpolatedFramesResult", 48: "XeFGSetUiCompositionResult",
     49: "PrimaryFailureTrigger", 50: "XeFGSetLoggingCallbackResult",
     51: "XeFGSetLatencyReductionResult", 52: "XeFGGetPropertiesResult", 53: "XeFGEnableDebugFeatureResult",
+    54: "XeFGPresentEnter", 55: "XeFGPresentBeforeUiWork", 56: "XeFGPresentAfterUiWork",
+    57: "XeFGPresentBeforeScWork", 58: "XeFGPresentAfterScWork", 59: "XeFGPresentBeforeDispatch",
+    60: "XeFGPresentAfterDispatch", 61: "UiCommandListCloseResult", 62: "UiExecuteCommandListsBegin",
+    63: "UiExecuteCommandListsEnd", 64: "UiQueueSignalResult", 65: "UiFenceSetEventResult",
+    66: "UiFenceWaitResult", 67: "UiAllocatorResetResult", 68: "UiCommandListResetResult",
+    69: "ScCommandListCloseResult", 70: "ScExecuteCommandListsBegin", 71: "ScExecuteCommandListsEnd",
+    72: "ScAllocatorResetResult", 73: "ScCommandListResetResult",
 }
 
 FLAG_NAMES = ((1, "skipResize"), (2, "skipResize1"), (4, "skipPresent"), (8, "skipPresent1"),
@@ -124,18 +131,20 @@ def write_output(trace: Trace, output_format: str) -> None:
 
 
 def self_test() -> None:
-    header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, 8, 1, 1000, 100, 4)
+    header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, 8, 1, 1000, 100, 5)
     records = bytearray(RECORD.size * 8)
     for sequence, event, result, aux0, aux1 in ((1, 1, 0, 0, 0), (2, 16, 0, 0, 0),
-                                                (3, 43, -7, 0, 0), (4, 49, -2147467260, 43, 1)):
+                                                (3, 43, -7, 0, 0), (4, 49, -2147467260, 43, 1),
+                                                (5, 67, 0, 2, 0)):
         RECORD.pack_into(records, (sequence % 8) * RECORD.size, sequence, 100 + sequence, 0x10, 0x20, 0x30,
                          sequence, 42, event, 2, 99, result, 4, aux0, aux1)
     trace = parse_bytes(header + records)
-    assert [record[0] for record in trace.records] == [1, 2, 3, 4]
+    assert [record[0] for record in trace.records] == [1, 2, 3, 4, 5]
     decoded = list(rows(trace))
     assert decoded[2]["result"] == -7
     assert decoded[3]["failure_source_event"] == "XeFGSetEnabledResult"
     assert decoded[3]["e_abort"] == "yes"
+    assert decoded[4]["event"] == "UiAllocatorResetResult"
     print("self-test: PASS")
 
 
