@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 MAGIC = 0x54474658
 VERSION = 1
+PRIMARY_FAILURE_EVENT = 49
 HEADER = struct.Struct("<IIIIIIQQQ")
 RECORD = struct.Struct("<QQQQQQIIIIiIII")
 
@@ -32,6 +33,8 @@ EVENT_NAMES = {
     41: "XeFGDestroyBegin", 42: "XeFGDestroyResult", 43: "XeFGSetEnabledResult",
     44: "XeFGTagFrameConstantsResult", 45: "XeFGSetPresentIdResult", 46: "XeFGTagFrameResourceResult",
     47: "XeFGSetNumInterpolatedFramesResult", 48: "XeFGSetUiCompositionResult",
+    49: "PrimaryFailureTrigger", 50: "XeFGSetLoggingCallbackResult",
+    51: "XeFGSetLatencyReductionResult", 52: "XeFGGetPropertiesResult", 53: "XeFGEnableDebugFeatureResult",
 }
 
 FLAG_NAMES = ((1, "skipResize"), (2, "skipResize1"), (4, "skipPresent"), (8, "skipPresent1"),
@@ -96,13 +99,16 @@ def rows(trace: Trace):
             "flags": flags_text(flags),
             "aux0": aux0,
             "aux1": aux1,
+            "failure_source_event": EVENT_NAMES.get(aux0, "") if event == PRIMARY_FAILURE_EVENT else "",
+            "e_abort": "yes" if event == PRIMARY_FAILURE_EVENT and aux1 == 1 else "",
         }
 
 
 def write_output(trace: Trace, output_format: str) -> None:
     data = list(rows(trace))
     fields = ["seq", "qpc_delta_ms", "thread", "event", "swapchain", "object_or_context", "aux_pointer",
-              "mutex_owner", "mutex_owner_thread", "fence", "result", "flags", "aux0", "aux1"]
+              "mutex_owner", "mutex_owner_thread", "fence", "result", "flags", "aux0", "aux1",
+              "failure_source_event", "e_abort"]
     if output_format == "csv":
         writer = csv.DictWriter(sys.stdout, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
@@ -118,14 +124,18 @@ def write_output(trace: Trace, output_format: str) -> None:
 
 
 def self_test() -> None:
-    header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, 4, 1, 1000, 100, 3)
-    records = bytearray(RECORD.size * 4)
-    for sequence, event in ((1, 1), (2, 16), (3, 43)):
-        RECORD.pack_into(records, (sequence % 4) * RECORD.size, sequence, 100 + sequence, 0x10, 0x20, 0x30,
-                         sequence, 42, event, 2, 99, -7 if sequence == 3 else 0, 4, 0, sequence)
+    header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, 8, 1, 1000, 100, 4)
+    records = bytearray(RECORD.size * 8)
+    for sequence, event, result, aux0, aux1 in ((1, 1, 0, 0, 0), (2, 16, 0, 0, 0),
+                                                (3, 43, -7, 0, 0), (4, 49, -2147467260, 43, 1)):
+        RECORD.pack_into(records, (sequence % 8) * RECORD.size, sequence, 100 + sequence, 0x10, 0x20, 0x30,
+                         sequence, 42, event, 2, 99, result, 4, aux0, aux1)
     trace = parse_bytes(header + records)
-    assert [record[0] for record in trace.records] == [1, 2, 3]
-    assert list(rows(trace))[2]["result"] == -7
+    assert [record[0] for record in trace.records] == [1, 2, 3, 4]
+    decoded = list(rows(trace))
+    assert decoded[2]["result"] == -7
+    assert decoded[3]["failure_source_event"] == "XeFGSetEnabledResult"
+    assert decoded[3]["e_abort"] == "yes"
     print("self-test: PASS")
 
 

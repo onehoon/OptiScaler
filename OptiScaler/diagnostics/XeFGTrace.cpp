@@ -14,6 +14,7 @@ constexpr size_t kTraceFileSize = sizeof(XeFGTrace::TraceHeader) +
 
 std::atomic<LONG> g_state { 0 }; // 0 = unused, 1 = initializing, 2 = ready, 3 = stopped
 std::atomic<LONG> g_failureFlushed { 0 };
+std::atomic<LONG> g_failureTriggered { 0 };
 HANDLE g_file = INVALID_HANDLE_VALUE;
 HANDLE g_mapping = nullptr;
 void* g_view = nullptr;
@@ -167,6 +168,18 @@ void FlushAfterFailureBestEffort() noexcept
         FlushFileBuffers(g_file);
 }
 
+void RecordPrimaryFailureTrigger(EventType sourceEvent, uint64_t swapchain, uint64_t objectOrContext,
+                                 int32_t rawResult, uint32_t flagsSnapshot) noexcept
+{
+    if (rawResult >= 0 || g_state.load(std::memory_order_acquire) != 2 ||
+        g_failureTriggered.exchange(1, std::memory_order_acq_rel) != 0)
+        return;
+
+    Record(EventType::PrimaryFailureTrigger, swapchain, objectOrContext, 0, 0, 0, 0, rawResult, flagsSnapshot,
+           static_cast<uint32_t>(sourceEvent), rawResult == kEAbortResult ? 1u : 0u);
+    FlushAfterFailureBestEffort();
+}
+
 void Record(EventType eventType, uint64_t swapchain, uint64_t objectOrContext, uint64_t auxPointer,
             uint64_t fenceValue, uint32_t mutexOwner, uint32_t mutexOwnerThread, int32_t result,
             uint32_t flagsSnapshot, uint32_t aux0, uint32_t aux1) noexcept
@@ -197,5 +210,8 @@ void Record(EventType eventType, uint64_t swapchain, uint64_t objectOrContext, u
     std::atomic_thread_fence(std::memory_order_release);
     InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&record.committedSequence),
                            static_cast<LONG64>(sequence));
+
+    if (eventType != EventType::PrimaryFailureTrigger && result < 0)
+        RecordPrimaryFailureTrigger(eventType, swapchain, objectOrContext, result, flagsSnapshot);
 }
 }

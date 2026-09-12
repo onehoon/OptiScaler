@@ -59,6 +59,11 @@ enum class EventType : uint32_t
     XeFGTagFrameResourceResult,
     XeFGSetNumInterpolatedFramesResult,
     XeFGSetUiCompositionResult,
+    PrimaryFailureTrigger,
+    XeFGSetLoggingCallbackResult,
+    XeFGSetLatencyReductionResult,
+    XeFGGetPropertiesResult,
+    XeFGEnableDebugFeatureResult,
 };
 
 enum TraceFlagBits : uint32_t
@@ -108,9 +113,17 @@ static_assert(offsetof(TraceRecord, committedSequence) == 0);
 static_assert(offsetof(TraceRecord, qpc) == 8);
 static_assert(alignof(TraceRecord) >= 8);
 
+constexpr int32_t kEAbortResult = static_cast<int32_t>(0x80004004u);
+
 void Initialize() noexcept;
 void Shutdown() noexcept;
 void FlushAfterFailureBestEffort() noexcept;
+
+void RecordPrimaryFailureTrigger(EventType sourceEvent,
+                                 uint64_t swapchain,
+                                 uint64_t objectOrContext,
+                                 int32_t rawResult,
+                                 uint32_t flagsSnapshot) noexcept;
 
 void Record(EventType eventType,
             uint64_t swapchain = 0,

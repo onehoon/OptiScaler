@@ -209,8 +209,8 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
                     XeFGTrace::Record(XeFGTrace::EventType::FenceWaitEnd,
                                       reinterpret_cast<uint64_t>(previousFGSwapchain),
                                       reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0,
-                                      static_cast<int32_t>(waitResult), TraceFlags(),
-                                      static_cast<uint32_t>(eventResult));
+                                      static_cast<int32_t>(eventResult), TraceFlags(),
+                                      static_cast<uint32_t>(waitResult));
                     if (FAILED(eventResult))
                         XeFGTrace::FlushAfterFailureBestEffort();
                     LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
@@ -368,8 +368,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
                     XeFGTrace::Record(XeFGTrace::EventType::FenceWaitEnd,
                                       reinterpret_cast<uint64_t>(previousFGSwapchain),
                                       reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0,
-                                      static_cast<int32_t>(waitResult), TraceFlags(),
-                                      static_cast<uint32_t>(eventResult));
+                                      static_cast<int32_t>(eventResult), TraceFlags(),
+                                      static_cast<uint32_t>(waitResult));
                     if (FAILED(eventResult))
                         XeFGTrace::FlushAfterFailureBestEffort();
                     LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
@@ -751,7 +751,7 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
             auto waitResult = WaitForSingleObject(resizeFenceEvent, 5000);
             XeFGTrace::Record(XeFGTrace::EventType::FenceWaitEnd, reinterpret_cast<uint64_t>(This),
                               reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0,
-                              static_cast<int32_t>(waitResult), TraceFlags(), static_cast<uint32_t>(eventResult));
+                              static_cast<int32_t>(eventResult), TraceFlags(), static_cast<uint32_t>(waitResult));
             if (FAILED(eventResult))
                 XeFGTrace::FlushAfterFailureBestEffort();
             LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
@@ -997,7 +997,7 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
             auto waitResult = WaitForSingleObject(resizeFenceEvent, 5000);
             XeFGTrace::Record(XeFGTrace::EventType::FenceWaitEnd, reinterpret_cast<uint64_t>(This),
                               reinterpret_cast<uint64_t>(resizeFenceEvent), 0, resizeFenceValue, 0, 0,
-                              static_cast<int32_t>(waitResult), TraceFlags(), static_cast<uint32_t>(eventResult));
+                              static_cast<int32_t>(eventResult), TraceFlags(), static_cast<uint32_t>(waitResult));
             LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
         }
     }
@@ -1270,10 +1270,22 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
 
     if (state.isShuttingDown)
     {
+        HRESULT shutdownResult;
         if (pPresentParameters == nullptr)
-            return o_FGSCPresent(This, SyncInterval, Flags);
+        {
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresentBegin, reinterpret_cast<uint64_t>(This));
+            shutdownResult = o_FGSCPresent(This, SyncInterval, Flags);
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresentEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
+                              shutdownResult, TraceFlags());
+        }
         else
-            return o_FGSCPresent1((IDXGISwapChain1*) This, SyncInterval, Flags, pPresentParameters);
+        {
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1Begin, reinterpret_cast<uint64_t>(This));
+            shutdownResult = o_FGSCPresent1((IDXGISwapChain1*) This, SyncInterval, Flags, pPresentParameters);
+            XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1End, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0,
+                              0, shutdownResult, TraceFlags());
+        }
+        return shutdownResult;
     }
 
     auto willPresent = (Flags & DXGI_PRESENT_TEST) == 0;

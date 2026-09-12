@@ -84,6 +84,8 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
         LOG_INFO("XeFG context created");
         result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                  nullptr);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetLoggingCallbackResult, 0,
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result));
 
         LogXeFGResult("SetLoggingCallback", result);
 
@@ -105,6 +107,9 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
             }
 
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, fakenvapi::getCurrentContext());
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGSetLatencyReductionResult, 0,
+                              reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                              static_cast<int32_t>(result), 0, 0);
 
             if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {
@@ -131,6 +136,9 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
             }
 
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, (xell_context_handle_t) localXellContext);
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGSetLatencyReductionResult, 0,
+                              reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                              static_cast<int32_t>(result), 0, 1);
 
             if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {
@@ -363,6 +371,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGGetPropertiesResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result));
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
@@ -592,6 +602,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGGetPropertiesResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result));
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
@@ -999,10 +1011,19 @@ bool XeFG_Dx12::Dispatch()
         }
     }
 
-    XeFGProxy::EnableDebugFeature()(_swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES,
-                                    Config::Instance()->FGXeFGDebugView.value_or_default(), nullptr);
-    XeFGProxy::EnableDebugFeature()(_swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_SHOW_ONLY_INTERPOLATION,
-                                    state.fgOnlyGenerated, nullptr);
+    auto debugResult = XeFGProxy::EnableDebugFeature()(
+        _swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES,
+        Config::Instance()->FGXeFGDebugView.value_or_default(), nullptr);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGEnableDebugFeatureResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(debugResult), 0,
+                      0);
+
+    debugResult = XeFGProxy::EnableDebugFeature()(_swapChainContext,
+                                                   XEFG_SWAPCHAIN_DEBUG_FEATURE_SHOW_ONLY_INTERPOLATION,
+                                                   state.fgOnlyGenerated, nullptr);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGEnableDebugFeatureResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(debugResult), 0,
+                      1);
 
     xefg_swapchain_frame_constant_data_t constData = {};
 
