@@ -1406,9 +1406,29 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
     if (willPresent && fgFeatureActive)
     {
         if (state.activeFgInput == FGInput::FSRFG)
+        {
+            XeFGTrace::Record(XeFGTrace::EventType::FSRFGPresentCallbackEnter,
+                              reinterpret_cast<uint64_t>(This), reinterpret_cast<uint64_t>(fg),
+                              reinterpret_cast<uint64_t>(state.currentFGSwapchain), fg->FrameCount(), 0, 0, 0,
+                              TraceFlags(), 1);
             ffxPresentCallback();
+            XeFGTrace::Record(XeFGTrace::EventType::FSRFGPresentCallbackExit,
+                              reinterpret_cast<uint64_t>(This), reinterpret_cast<uint64_t>(fg),
+                              reinterpret_cast<uint64_t>(state.currentFGSwapchain), fg->FrameCount(), 0, 0, 0,
+                              TraceFlags(), 1);
+        }
         else if (state.activeFgInput == FGInput::FSRFG30)
+        {
+            XeFGTrace::Record(XeFGTrace::EventType::FSRFGPresentCallbackEnter,
+                              reinterpret_cast<uint64_t>(This), reinterpret_cast<uint64_t>(fg),
+                              reinterpret_cast<uint64_t>(state.currentFGSwapchain), fg->FrameCount(), 0, 0, 0,
+                              TraceFlags(), 2);
             FSR3FG::ffxPresentCallback();
+            XeFGTrace::Record(XeFGTrace::EventType::FSRFGPresentCallbackExit,
+                              reinterpret_cast<uint64_t>(This), reinterpret_cast<uint64_t>(fg),
+                              reinterpret_cast<uint64_t>(state.currentFGSwapchain), fg->FrameCount(), 0, 0, 0,
+                              TraceFlags(), 2);
+        }
 
         fg->Present();
     }
