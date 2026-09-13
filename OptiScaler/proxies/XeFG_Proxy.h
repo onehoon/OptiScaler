@@ -5,6 +5,8 @@
 #include "Config.h"
 #include "Logger.h"
 
+#include <magic_enum.hpp>
+
 #include <proxies/Ntdll_Proxy.h>
 #include <proxies/KernelBase_Proxy.h>
 
@@ -293,13 +295,26 @@ class XeFGProxy
     {
         if (_xefgVersion.major == 0 && _xefgSwapChainGetVersion != nullptr)
         {
-            if (auto result = _xefgSwapChainGetVersion(&_xefgVersion); result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            xefg_swapchain_version_t version {};
+            auto result = _xefgSwapChainGetVersion(&version);
+
+            if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {
+                _xefgVersion = version;
                 LOG_INFO("XeFG Version: v{}.{}.{}", _xefgVersion.major, _xefgVersion.minor, _xefgVersion.patch);
             }
             else
             {
-                LOG_ERROR("Can't get XeFG version: {}", (UINT) result);
+                const auto value = static_cast<int32_t>(result);
+
+                if (value > 0)
+                {
+                    LOG_WARN("XeFG version warning: {} ({})", magic_enum::enum_name(result), value);
+                }
+                else
+                {
+                    LOG_ERROR("XeFG version error: {} ({})", magic_enum::enum_name(result), value);
+                }
             }
         }
 

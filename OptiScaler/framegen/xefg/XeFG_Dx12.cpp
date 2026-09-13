@@ -7,6 +7,7 @@
 #include <nvapi/fakenvapi.h>
 
 #include <magic_enum.hpp>
+#include <wrl/client.h>
 
 #include <DirectXMath.h>
 
@@ -357,11 +358,9 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     if (!CheckForRealObject(__FUNCTION__, cmdQueue, (IUnknown**) &realQueue))
         realQueue = cmdQueue;
 
-    IDXGIFactory2* factory12 = nullptr;
+    Microsoft::WRL::ComPtr<IDXGIFactory2> factory12;
     if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
         return AbortSwapchainInitialization("QueryInterface(IDXGIFactory2)");
-
-    factory12->Release();
 
     HWND hwnd = desc->OutputWindow;
     DXGI_SWAP_CHAIN_DESC1 scDesc {};
@@ -452,8 +451,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 #endif // !DONT_USE_XMX
 
     xefg_swapchain_result_t result;
-    result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
-                                                     &params);
+    result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue,
+                                                     factory12.Get(), &params);
 
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
@@ -561,11 +560,9 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     if (!CheckForRealObject(__FUNCTION__, cmdQueue, (IUnknown**) &realQueue))
         realQueue = cmdQueue;
 
-    IDXGIFactory2* factory12 = nullptr;
+    Microsoft::WRL::ComPtr<IDXGIFactory2> factory12;
     if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
         return AbortSwapchainInitialization("QueryInterface(IDXGIFactory2)");
-
-    factory12->Release();
 
     xefg_swapchain_d3d12_init_params_t params {};
 
@@ -623,7 +620,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
     xefg_swapchain_result_t result;
     result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, desc, pFullscreenDesc, realQueue,
-                                                     factory12, &params);
+                                                     factory12.Get(), &params);
 
     State::Instance().skipSpoofing = false;
 
