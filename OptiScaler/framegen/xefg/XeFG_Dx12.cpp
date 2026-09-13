@@ -409,8 +409,6 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
         return false;
 
-    factory12->Release();
-
     HWND hwnd = desc->OutputWindow;
     DXGI_SWAP_CHAIN_DESC1 scDesc {};
 
@@ -504,6 +502,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     xefg_swapchain_result_t result;
     result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                      &params);
+    factory12->Release();
+    factory12 = nullptr;
     XeFGTrace::Record(XeFGTrace::EventType::XeFGInitSwapchainResult, reinterpret_cast<uint64_t>(_swapChain),
                       reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(realQueue), 0, 0, 0,
                       static_cast<int32_t>(result));
@@ -639,8 +639,6 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
         return false;
 
-    factory12->Release();
-
     xefg_swapchain_d3d12_init_params_t params {};
 
     int intTarget = _maxInterpolationCount;
@@ -699,6 +697,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 #endif // !DONT_USE_XMX
         result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, desc, pFullscreenDesc, realQueue,
                                                          factory12, &params);
+        factory12->Release();
+        factory12 = nullptr;
         XeFGTrace::Record(XeFGTrace::EventType::XeFGInitSwapchainResult, reinterpret_cast<uint64_t>(_swapChain),
                           reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(realQueue), 0, 0, 0,
                           static_cast<int32_t>(result));
