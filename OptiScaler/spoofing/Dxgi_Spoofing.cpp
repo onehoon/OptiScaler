@@ -2,6 +2,8 @@
 #include "Dxgi_Spoofing.h"
 
 #include <Config.h>
+#include <State.h>
+#include <misc/Quirks.h>
 
 #include <detours/detours.h>
 
@@ -40,6 +42,55 @@ inline static bool SkipSpoofing()
     }
 
     return skip;
+}
+
+inline static bool IsIntelReflexDxgiQuirkConfigured()
+{
+    const auto* config = Config::Instance();
+    const auto& state = State::Instance();
+
+    if (!(state.gameQuirks & GameQuirk::FixSlReflexAvailabilityOnIntel))
+        return false;
+
+    // The release/0.9 local SkipSpoofing() also treats DxgiSpoofing=false as
+    // a skip. This quirk intentionally runs with broad DXGI spoofing disabled.
+    if (!config->StreamlineSpoofing.value_or_default() || config->DxgiSpoofing.value_or_default() || state.skipSpoofing)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+inline static bool IsIntelReflexDxgiQuirkEligible(uint32_t vendorId)
+{
+    return IsIntelReflexDxgiQuirkConfigured() && vendorId == VendorId::Intel;
+}
+
+template <typename T> inline static bool ShouldApplyIntelReflexGameIdentity(const std::string& caller, const T* desc)
+{
+    if (!IsIntelReflexDxgiQuirkEligible(desc->VendorId) || !iequals(caller, State::Instance().GameExe))
+        return false;
+
+    const auto* config = Config::Instance();
+    const bool targetVendorIdMatches =
+        !config->TargetVendorId.has_value() || config->TargetVendorId.value() == desc->VendorId;
+    const bool targetDeviceIdMatches =
+        !config->TargetDeviceId.has_value() || config->TargetDeviceId.value() == desc->DeviceId;
+
+    return desc->VendorId != VendorId::Microsoft && targetVendorIdMatches && targetDeviceIdMatches;
+}
+
+template <typename T> inline static void ApplyIntelReflexGameIdentity(T* desc)
+{
+    const auto* config = Config::Instance();
+
+    desc->VendorId = config->SpoofedVendorId.value_or_default();
+    desc->DeviceId = config->SpoofedDeviceId.value_or_default();
+
+    const auto spoofedName = config->SpoofedGPUName.value_or_default();
+    std::memset(desc->Description, 0, sizeof(desc->Description));
+    std::wcscpy(desc->Description, spoofedName.c_str());
 }
 
 HRESULT DxgiSpoofing::hkGetDesc3(IDXGIAdapter4* This, DXGI_ADAPTER_DESC3* pDesc)
@@ -96,6 +147,9 @@ HRESULT DxgiSpoofing::hkGetDesc3(IDXGIAdapter4* This, DXGI_ADAPTER_DESC3* pDesc)
             LOG_DEBUG("spoofing");
 #endif
         }
+
+        if (ShouldApplyIntelReflexGameIdentity(caller, pDesc))
+            ApplyIntelReflexGameIdentity(pDesc);
     }
 
     AttachToAdapter(This);
@@ -157,6 +211,9 @@ HRESULT DxgiSpoofing::hkGetDesc2(IDXGIAdapter2* This, DXGI_ADAPTER_DESC2* pDesc)
             LOG_DEBUG("spoofing");
 #endif
         }
+
+        if (ShouldApplyIntelReflexGameIdentity(caller, pDesc))
+            ApplyIntelReflexGameIdentity(pDesc);
     }
 
     AttachToAdapter(This);
@@ -218,6 +275,9 @@ HRESULT DxgiSpoofing::hkGetDesc1(IDXGIAdapter1* This, DXGI_ADAPTER_DESC1* pDesc)
             LOG_DEBUG("spoofing");
 #endif
         }
+
+        if (ShouldApplyIntelReflexGameIdentity(caller, pDesc))
+            ApplyIntelReflexGameIdentity(pDesc);
     }
 
     AttachToAdapter(This);
@@ -279,6 +339,9 @@ HRESULT DxgiSpoofing::hkGetDesc(IDXGIAdapter* This, DXGI_ADAPTER_DESC* pDesc)
             LOG_DEBUG("spoofing");
 #endif
         }
+
+        if (ShouldApplyIntelReflexGameIdentity(caller, pDesc))
+            ApplyIntelReflexGameIdentity(pDesc);
     }
 
     AttachToAdapter(This);
@@ -293,7 +356,11 @@ HRESULT DxgiSpoofing::hkGetDesc(IDXGIAdapter* This, DXGI_ADAPTER_DESC* pDesc)
 void DxgiSpoofing::AttachToAdapter(IUnknown* unkAdapter)
 {
     static bool logAdded = false;
-    if (!Config::Instance()->DxgiSpoofing.value_or_default() && !Config::Instance()->DxgiVRAM.has_value())
+    const bool normalDxgiHooksNeeded =
+        Config::Instance()->DxgiSpoofing.value_or_default() || Config::Instance()->DxgiVRAM.has_value();
+    const bool intelReflexQuirkNeeded = IsIntelReflexDxgiQuirkConfigured();
+
+    if (!normalDxgiHooksNeeded && !intelReflexQuirkNeeded)
     {
         if (!logAdded)
         {

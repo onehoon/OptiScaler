@@ -1232,6 +1232,9 @@ static void printQuirks(flag_set<GameQuirk>& quirks)
     if (quirks & GameQuirk::RestoreComputeSigOnNvidia)
         stringQuirks.push_back("Enabling restore compute signature on Nvidia");
 
+    if (quirks & GameQuirk::FixSlReflexAvailabilityOnIntel)
+        stringQuirks.push_back("Fix Streamline Reflex availability on Intel");
+
     if (quirks & GameQuirk::ExtendedSigRestore)
         stringQuirks.push_back("Extended signatures restore");
 
