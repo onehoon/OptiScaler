@@ -817,7 +817,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullsc
         {
 
             if (State::Instance().currentFG != nullptr && State::Instance().currentFG->IsActive() &&
-                State::Instance().currentFG->Mutex.getOwner() != 3)
+                !State::Instance().currentFG->Mutex.isOwnedByCurrentThread(3))
             {
                 LOG_TRACE("Waiting ffxMutex 3, current: {}", State::Instance().currentFG->Mutex.getOwner());
                 State::Instance().currentFG->Mutex.lock(3);
