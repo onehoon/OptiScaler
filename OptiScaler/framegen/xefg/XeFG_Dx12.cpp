@@ -1182,9 +1182,9 @@ bool XeFG_Dx12::ScaleHudlessToSwapchain(Dx12Resource* fResource, Dx12Resource* i
         _hudlessScaler[index] = std::make_unique<OS_Dx12>("HudlessScale", _device, true);
 
     auto& scaler = _hudlessScaler[index];
-    if (scaler == nullptr || !scaler->CanRender())
+    if (scaler == nullptr)
     {
-        LOG_ERROR("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=scaler-not-ready", frameId, index);
+        LOG_ERROR("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=scaler-null", frameId, index);
         return false;
     }
 
@@ -1197,7 +1197,7 @@ bool XeFG_Dx12::ScaleHudlessToSwapchain(Dx12Resource* fResource, Dx12Resource* i
 
     if (!scaler->CreateBufferResource(_device, inputResource->resource, swapchainWidth, swapchainHeight,
                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS) ||
-        scaler->Buffer() == nullptr)
+        !scaler->CanRender())
     {
         LOG_ERROR(
             "[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=intermediate-allocation-failed source={}x{} "
