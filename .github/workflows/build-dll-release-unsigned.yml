@@ -2,12 +2,6 @@ name: Build DLL Release (Unsigned)
 
 on:
   workflow_dispatch:
-    inputs:
-      target_ref:
-        description: Branch, tag, or commit SHA to build
-        required: true
-        default: master
-        type: string
 
 env:
   BUILD_CONFIGURATION: Release
@@ -27,20 +21,19 @@ jobs:
       - name: Checkout selected ref
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.target_ref }}
           fetch-depth: 0
           submodules: recursive
 
       - name: Report selected revision
         shell: powershell
         env:
-          REQUESTED_REF: ${{ inputs.target_ref }}
+          REQUESTED_REF: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
           $resolvedSha = (git rev-parse HEAD).Trim()
           $shortSha = (git rev-parse --short HEAD).Trim()
 
-          Write-Host "Requested target_ref: $env:REQUESTED_REF"
+          Write-Host "Selected ref: $env:REQUESTED_REF"
           Write-Host "Resolved HEAD SHA: $resolvedSha"
           Write-Host "Resolved short SHA: $shortSha"
 
@@ -55,7 +48,7 @@ jobs:
         id: package
         shell: powershell
         env:
-          REQUESTED_REF: ${{ inputs.target_ref }}
+          REQUESTED_REF: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
 
