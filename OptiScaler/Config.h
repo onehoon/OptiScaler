@@ -235,13 +235,13 @@ class Config
     CustomOptional<float> DlssReactiveMaskBias { 0.45f };
 
     // Logging
-    CustomOptional<bool> LogToFile { false };
+    CustomOptional<bool> LogToFile { true };
     CustomOptional<bool> LogToConsole { false };
     CustomOptional<bool> LogToDebug { false };
     CustomOptional<bool> LogToNGX { false };
     CustomOptional<bool> OpenConsole { false };
     CustomOptional<bool> DebugWait { false }; // not in ini
-    CustomOptional<int> LogLevel { 0 };
+    CustomOptional<int> LogLevel { 7 };
     CustomOptional<std::wstring> LogFileName { L"OptiScaler.log" };
     CustomOptional<bool> LogSingleFile { true };
     CustomOptional<bool> LogAsync { false };

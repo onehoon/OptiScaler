@@ -11,6 +11,11 @@
 
 #include "Util.h"
 
+namespace
+{
+constexpr int kXeFGDiagnosticLogLevel = 7;
+}
+
 static bool InitializeConsole()
 {
     // Allocate a console for this app
@@ -159,10 +164,18 @@ void PrepareLogger()
                 shared_logger = std::make_shared<spdlog::logger>(logger);
             }
 
-            shared_logger->set_level((spdlog::level::level_enum) Config::Instance()->LogLevel.value_or_default());
-            shared_logger->flush_on(spdlog::level::trace);
+            const int configuredLevel = Config::Instance()->LogLevel.value_or_default();
+            const bool xefgDiagnosticMode = configuredLevel == kXeFGDiagnosticLogLevel;
+            const auto spdlogLevel =
+                xefgDiagnosticMode ? spdlog::level::critical : static_cast<spdlog::level::level_enum>(configuredLevel);
+
+            shared_logger->set_level(spdlogLevel);
+            shared_logger->flush_on(xefgDiagnosticMode ? spdlog::level::critical : spdlog::level::trace);
 
             spdlog::set_default_logger(shared_logger);
+
+            if (xefgDiagnosticMode)
+                LOG_XEFG_DIAG("mode=enabled log_level=7 async=false");
         }
     }
     catch (const spdlog::spdlog_ex& ex)

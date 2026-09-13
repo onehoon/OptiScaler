@@ -108,6 +108,8 @@ inline DWORD processId;
 
 #define LOG_ERROR(msg, ...) spdlog::error(__FUNCTION__ " " msg, ##__VA_ARGS__)
 
+#define LOG_XEFG_DIAG(msg, ...) spdlog::critical("[XeFGDiag] " __FUNCTION__ " " msg, ##__VA_ARGS__)
+
 #define LOG_FUNC() spdlog::trace(__FUNCTION__)
 
 #define LOG_FUNC_RESULT(result) spdlog::trace(__FUNCTION__ " result: {0:X}", (UINT64) result)

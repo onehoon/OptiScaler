@@ -428,6 +428,8 @@ void FGHooks::SetFGSwapchain(IDXGISwapChain* pSwapChain, HWND hWnd)
 
     State::Instance().currentFGSwapchain = pSwapChain;
     State::Instance().currentSwapchain = pSwapChain;
+    LOG_XEFG_DIAG("action=fg_swapchain_bound proxy={:X} hwnd={:X} current_fg={:X}", (size_t) pSwapChain, (size_t) hWnd,
+                  (size_t) State::Instance().currentFGSwapchain);
 
     HookFGSwapchain(pSwapChain);
 }
@@ -680,6 +682,8 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
 HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat,
                                  UINT SwapChainFlags)
 {
+    LOG_XEFG_DIAG("api=ResizeBuffers stage=enter proxy={:X} count={} width={} height={} format={} flags={:X}",
+                  (size_t) This, BufferCount, Width, Height, (UINT) NewFormat, SwapChainFlags);
     XeFGTrace::Record(XeFGTrace::EventType::ResizeEnter, reinterpret_cast<uint64_t>(This), 0, 0, resizeFenceValue, 0, 0,
                       0, TraceFlags(), BufferCount, Width);
 
@@ -702,6 +706,8 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
             LOG_DEBUG("XeFG internal ResizeBuffers result: {:X}", (UINT) result);
             if (FAILED(result))
                 XeFGTrace::FlushAfterFailureBestEffort();
+            LOG_XEFG_DIAG("api=ResizeBuffers stage=return proxy={:X} hr=0x{:08X}", (size_t) This,
+                          static_cast<unsigned int>(result));
             return result;
         }
 
@@ -710,7 +716,12 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
         XeFGTrace::Record(XeFGTrace::EventType::ResizeDxgiEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0, result,
                           TraceFlags());
         if (FAILED(result))
+            LOG_XEFG_DIAG("FAILURE api=ResizeBuffers proxy={:X} hr=0x{:08X}", (size_t) This,
+                          static_cast<unsigned int>(result));
+        if (FAILED(result))
             XeFGTrace::FlushAfterFailureBestEffort();
+        LOG_XEFG_DIAG("api=ResizeBuffers stage=return proxy={:X} hr=0x{:08X}", (size_t) This,
+                      static_cast<unsigned int>(result));
         return result;
     }
 
@@ -833,6 +844,7 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
                     }
                 }
 
+                LOG_XEFG_DIAG("api=ResizeBuffers stage=return proxy={:X} hr=0x00000000 skipped=1", (size_t) This);
                 return S_OK;
             }
         }
@@ -900,6 +912,8 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
         SetWindowPos(_hwnd, HWND_TOP, info.x, info.y, info.width, info.height, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
     }
 
+    LOG_XEFG_DIAG("api=ResizeBuffers stage=return proxy={:X} hr=0x{:08X}", (size_t) This,
+                  static_cast<unsigned int>(result));
     return result;
 }
 
@@ -926,6 +940,8 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
 HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format,
                                   UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
 {
+    LOG_XEFG_DIAG("api=ResizeBuffers1 stage=enter proxy={:X} count={} width={} height={} format={} flags={:X}",
+                  (size_t) This, BufferCount, Width, Height, (UINT) Format, SwapChainFlags);
     XeFGTrace::Record(XeFGTrace::EventType::Resize1Enter, reinterpret_cast<uint64_t>(This), 0, 0, resizeFenceValue, 0,
                       0, 0, TraceFlags(), BufferCount, Width);
 
@@ -948,6 +964,8 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
                               result, TraceFlags());
 
             LOG_DEBUG("XeFG internal ResizeBuffers1 result: {:X}", (UINT) result);
+            LOG_XEFG_DIAG("api=ResizeBuffers1 stage=return proxy={:X} hr=0x{:08X}", (size_t) This,
+                          static_cast<unsigned int>(result));
             return result;
         }
 
@@ -957,7 +975,12 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
         XeFGTrace::Record(XeFGTrace::EventType::Resize1DxgiEnd, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0, result,
                           TraceFlags());
         if (FAILED(result))
+            LOG_XEFG_DIAG("FAILURE api=ResizeBuffers1 proxy={:X} hr=0x{:08X}", (size_t) This,
+                          static_cast<unsigned int>(result));
+        if (FAILED(result))
             XeFGTrace::FlushAfterFailureBestEffort();
+        LOG_XEFG_DIAG("api=ResizeBuffers1 stage=return proxy={:X} hr=0x{:08X}", (size_t) This,
+                      static_cast<unsigned int>(result));
         return result;
     }
 
@@ -1074,6 +1097,7 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
                     }
                 }
 
+                LOG_XEFG_DIAG("api=ResizeBuffers1 stage=return proxy={:X} hr=0x00000000 skipped=1", (size_t) This);
                 return S_OK;
             }
         }
@@ -1141,6 +1165,8 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
         SetWindowPos(_hwnd, HWND_TOP, info.x, info.y, info.width, info.height, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
     }
 
+    LOG_XEFG_DIAG("api=ResizeBuffers1 stage=return proxy={:X} hr=0x{:08X}", (size_t) This,
+                  static_cast<unsigned int>(result));
     return result;
 }
 
@@ -1177,6 +1203,9 @@ HRESULT FGHooks::hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags
             LOG_DEBUG("o_FGSCPresent result: {:X}", (UINT) result);
         }
 
+        if (FAILED(result))
+            LOG_XEFG_DIAG("FAILURE api=Present proxy={:X} hr=0x{:08X}", (size_t) This,
+                          static_cast<unsigned int>(result));
         if (FAILED(result))
             XeFGTrace::FlushAfterFailureBestEffort();
         return result;
@@ -1230,6 +1259,9 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
         }
 
         if (FAILED(result))
+            LOG_XEFG_DIAG("FAILURE api=Present1 proxy={:X} hr=0x{:08X}", (size_t) This,
+                          static_cast<unsigned int>(result));
+        if (FAILED(result))
             XeFGTrace::FlushAfterFailureBestEffort();
         return result;
     }
@@ -1271,6 +1303,10 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
             XeFGTrace::Record(XeFGTrace::EventType::DxgiPresent1End, reinterpret_cast<uint64_t>(This), 0, 0, 0, 0, 0,
                               shutdownResult, TraceFlags());
         }
+        if (FAILED(shutdownResult))
+            LOG_XEFG_DIAG("FAILURE api={} proxy={:X} hr=0x{:08X}",
+                          pPresentParameters == nullptr ? "Present" : "Present1", (size_t) This,
+                          static_cast<unsigned int>(shutdownResult));
         return shutdownResult;
     }
 
@@ -1476,6 +1512,9 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
     }
 
     if (FAILED(result))
+        LOG_XEFG_DIAG("FAILURE api={} proxy={:X} hr=0x{:08X}", pPresentParameters == nullptr ? "Present" : "Present1",
+                      (size_t) This, static_cast<unsigned int>(result));
+    if (FAILED(result))
         XeFGTrace::FlushAfterFailureBestEffort();
 
     if (result == S_OK)
@@ -1597,6 +1636,8 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 LOG_DEBUG("FG Swapchain released, release FG & swapchain context");
                 if (auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG); xefg != nullptr)
                 {
+                    LOG_XEFG_DIAG("action=final_proxy_release_candidate proxy={:X} hwnd={:X} current_fg_proxy={:X}",
+                                  (size_t) This, (size_t) _hwnd, (size_t) state.currentFGSwapchain);
                     releaseSucceeded =
                         xefg->ReleaseSwapchainFromFinalProxyRelease(_hwnd, This, [This]() { o_FGRelease(This); });
                 }
