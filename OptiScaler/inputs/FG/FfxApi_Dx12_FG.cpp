@@ -4,6 +4,7 @@
 
 #include <Util.h>
 #include <Config.h>
+#include <diagnostics/XeFGTrace.h>
 
 #include <magic_enum.hpp>
 
@@ -93,16 +94,23 @@ void CheckForFrame(IFGFeature_Dx12* fg, uint64_t frameId)
 {
     std::scoped_lock lock(_frameBoundaryMutex);
 
+    XeFGTrace::Record(XeFGTrace::EventType::FSRFGFrameBoundaryEnter, 0, reinterpret_cast<uint64_t>(fg), 0, frameId, 0,
+                      0, 0, 0, static_cast<uint32_t>(_currentFrameId), 1);
+
     if (frameId == 0)
         _currentFrameId = 0;
 
     if (frameId != 0 && frameId > _currentFrameId)
     {
         LOG_DEBUG("frameId: {} > _currentFrameId: {}", frameId, _currentFrameId);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGStartNewFrameBefore, 0, reinterpret_cast<uint64_t>(fg), 0, frameId,
+                          0, 0, 0, 0, 1);
         fg->StartNewFrame();
         _currentIndex = fg->GetIndex();
         _currentFrameId = frameId;
         _frameIdIndex[_currentIndex] = _currentFrameId;
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGStartNewFrameAfter, 0, reinterpret_cast<uint64_t>(fg), 0, frameId,
+                          0, 0, 0, 0, static_cast<uint32_t>(_currentIndex), 1);
     }
 }
 
@@ -520,17 +528,39 @@ ffxReturnCode_t ffxConfigure_Dx12FG(ffxContext* context, ffxConfigureDescHeader*
         LOG_DEBUG("FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION frameID: {}, enabled: {}, fIndex: {} ", cDesc->frameID,
                   cDesc->frameGenerationEnabled, fIndex);
 
-        s.fsrfgInputActive = cDesc->frameGenerationEnabled;
+        const bool frameGenEnabled = cDesc->frameGenerationEnabled;
+        const bool globalFgEnabled = Config::Instance()->FGEnabled.value_or_default();
+        const bool isActive = fg->IsActive();
+        bool isPaused = false;
+        if (frameGenEnabled && !isActive && globalFgEnabled)
+            isPaused = fg->IsPaused();
 
-        if (cDesc->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
+        s.fsrfgInputActive = frameGenEnabled;
+
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0,
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
+                          static_cast<uint32_t>(fIndex));
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0,
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
+                          1);
+
+        if (frameGenEnabled && !isActive && globalFgEnabled)
         {
-            if (!fg->IsPaused())
+            if (!isPaused)
             {
+                XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateBefore, 0, reinterpret_cast<uint64_t>(fg),
+                                  reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0, 1);
                 fg->Activate();
+                XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateAfter, 0, reinterpret_cast<uint64_t>(fg),
+                                  reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0, 0, 1);
                 fg->ResetCounters();
             }
         }
-        else if (!cDesc->frameGenerationEnabled && fg->IsActive())
+        else if (!frameGenEnabled && isActive)
         {
             fg->Deactivate();
             fg->ResetCounters();
@@ -1051,7 +1081,11 @@ ffxReturnCode_t ffxDispatch_Dx12FG(ffxContext* context, ffxDispatchDescHeader* d
         auto fIndex = IndexForFrameId(cdDesc->frameID);
 
         auto device = _device == nullptr ? s.currentD3D12Device : _device;
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGEvaluateStateBefore, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(device), cdDesc->frameID, 0, 0, 0, 0, 1);
         fg->EvaluateState(device, _fgConst);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGEvaluateStateAfter, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(device), cdDesc->frameID, 0, 0, 0, 0, 1);
 
         if (!fg->IsActive() || fg->IsPaused())
             return FFX_API_RETURN_OK;
@@ -1156,7 +1190,11 @@ ffxReturnCode_t ffxDispatch_Dx12FG(ffxContext* context, ffxDispatchDescHeader* d
         auto fIndex = IndexForFrameId(cdDesc->frameID);
 
         auto device = _device == nullptr ? s.currentD3D12Device : _device;
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGEvaluateStateBefore, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(device), cdDesc->frameID, 0, 0, 0, 0, 1);
         fg->EvaluateState(device, _fgConst);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGEvaluateStateAfter, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(device), cdDesc->frameID, 0, 0, 0, 0, 1);
 
         if (!fg->IsActive() || fg->IsPaused())
             return FFX_API_RETURN_OK;

@@ -9,6 +9,7 @@
 #include <magic_enum.hpp>
 
 #include <DirectXMath.h>
+#include <diagnostics/XeFGTrace.h>
 
 using namespace DirectX;
 
@@ -68,6 +69,11 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
     do
     {
         auto result = XeFGProxy::D3D12CreateContext()(device, &_swapChainContext);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGCreateContextResult, 0,
+                          reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(device), 0, 0, 0,
+                          static_cast<int32_t>(result));
+        if (static_cast<int32_t>(result) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
 
         if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
@@ -78,6 +84,8 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
         LOG_INFO("XeFG context created");
         result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                  nullptr);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetLoggingCallbackResult, 0,
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result));
 
         LogXeFGResult("SetLoggingCallback", result);
 
@@ -99,6 +107,9 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
             }
 
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, fakenvapi::getCurrentContext());
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGSetLatencyReductionResult, 0,
+                              reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result),
+                              0, 0);
 
             if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {
@@ -125,6 +136,9 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
             }
 
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, (xell_context_handle_t) localXellContext);
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGSetLatencyReductionResult, 0,
+                              reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result),
+                              0, 1);
 
             if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {
@@ -194,17 +208,29 @@ HWND XeFG_Dx12::Hwnd() { return _hwnd; }
 
 bool XeFG_Dx12::DestroySwapchainContext()
 {
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, 0,
+                      0, State::Instance().isShuttingDown ? 1u : 0u, _swapchainRecreationBlocked ? 1u : 0u);
     LOG_DEBUG("");
 
     if (_swapChainContext == nullptr || State::Instance().isShuttingDown)
+    {
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit, reinterpret_cast<uint64_t>(_swapChain),
+                          0, reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, S_OK, 0, 1);
         return true;
+    }
 
     auto context = _swapChainContext;
     _swapChainContext = nullptr;
 
     LOG_INFO("[XeFG][Lifecycle] action = destroy_begin, context = {:X}", (size_t) context);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyBegin, 0, reinterpret_cast<uint64_t>(context));
 
     auto result = XeFGProxy::Destroy()(context);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyResult, 0, reinterpret_cast<uint64_t>(context), 0, 0, 0, 0,
+                      static_cast<int32_t>(result));
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
 
     LOG_INFO("[XeFG][Lifecycle] action = destroy_return, context = {:X}, result = {} ({})", (size_t) context,
              magic_enum::enum_name(result), static_cast<int32_t>(result));
@@ -227,11 +253,16 @@ bool XeFG_Dx12::DestroySwapchainContext()
                       (size_t) context, magic_enum::enum_name(result), static_cast<int32_t>(result));
         }
 
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(context), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0,
+                          static_cast<int32_t>(result), 0, 0);
         return false;
     }
 
     _swapchainRecreationBlocked = false;
     State::Instance().currentFGSwapchain = nullptr;
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroySwapchainContextExit, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(context), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, S_OK, 0, 1);
     return true;
 }
 
@@ -352,6 +383,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGGetPropertiesResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result));
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
@@ -375,8 +408,6 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     IDXGIFactory2* factory12 = nullptr;
     if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
         return false;
-
-    factory12->Release();
 
     HWND hwnd = desc->OutputWindow;
     DXGI_SWAP_CHAIN_DESC1 scDesc {};
@@ -471,6 +502,13 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     xefg_swapchain_result_t result;
     result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                      &params);
+    factory12->Release();
+    factory12 = nullptr;
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGInitSwapchainResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(realQueue), 0, 0, 0,
+                      static_cast<int32_t>(result));
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
 
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
@@ -480,6 +518,10 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 
     IDXGISwapChain* queriedSwapChain = nullptr;
     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(&queriedSwapChain));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGGetSwapchainPtrResult, reinterpret_cast<uint64_t>(queriedSwapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result));
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("D3D12GetSwapChainPtr", result);
@@ -493,7 +535,12 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
     if (State::Instance().activeFgInput == FGInput::ForceXeLL)
     {
-        XeFGProxy::SetEnabled()(_swapChainContext, true);
+        auto enabledResult = XeFGProxy::SetEnabled()(_swapChainContext, true);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetEnabledResult, reinterpret_cast<uint64_t>(*swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                          static_cast<int32_t>(enabledResult), 0, 1);
+        if (static_cast<int32_t>(enabledResult) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
     }
 
     _gameCommandQueue = realQueue;
@@ -566,6 +613,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGGetPropertiesResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result));
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
@@ -589,8 +638,6 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     IDXGIFactory2* factory12 = nullptr;
     if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
         return false;
-
-    factory12->Release();
 
     xefg_swapchain_d3d12_init_params_t params {};
 
@@ -650,6 +697,13 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 #endif // !DONT_USE_XMX
         result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, desc, pFullscreenDesc, realQueue,
                                                          factory12, &params);
+        factory12->Release();
+        factory12 = nullptr;
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGInitSwapchainResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(realQueue), 0, 0, 0,
+                          static_cast<int32_t>(result));
+        if (static_cast<int32_t>(result) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
     }
 
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
@@ -660,6 +714,10 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
     IDXGISwapChain1* queriedSwapChain = nullptr;
     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(&queriedSwapChain));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGGetSwapchainPtrResult, reinterpret_cast<uint64_t>(queriedSwapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result));
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("D3D12GetSwapChainPtr", result);
@@ -673,7 +731,12 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
     if (State::Instance().activeFgInput == FGInput::ForceXeLL)
     {
-        XeFGProxy::SetEnabled()(_swapChainContext, true);
+        auto enabledResult = XeFGProxy::SetEnabled()(_swapChainContext, true);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetEnabledResult, reinterpret_cast<uint64_t>(*swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                          static_cast<int32_t>(enabledResult), 0, 1);
+        if (static_cast<int32_t>(enabledResult) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
     }
 
     _gameCommandQueue = realQueue;
@@ -707,6 +770,9 @@ void XeFG_Dx12::CreateContext(ID3D12Device* device, FG_Constants& fgConstants)
 
 void XeFG_Dx12::Activate()
 {
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGActivateEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, 0,
+                      0, IsLowResMV() ? 1u << 1 : 0u);
     LOG_DEBUG("");
 
     auto currentFeature = State::Instance().currentFeature;
@@ -714,11 +780,24 @@ void XeFG_Dx12::Activate()
     if (State::Instance().activeFgInput == FGInput::Upscaler && currentFeature != nullptr)
         nativeAA = currentFeature->RenderWidth() == currentFeature->DisplayWidth();
 
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGActivateEligibility, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, 0,
+                      0,
+                      (_swapChainContext != nullptr ? 1u : 0u) | (_fgContext != nullptr ? 1u << 1 : 0u) |
+                          (IsLowResMV() ? 1u << 3 : 0u) | (nativeAA ? 1u << 4 : 0u) |
+                          ((State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ? 1u << 5 : 0u) |
+                          (Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default() ? 1u << 6 : 0u));
+
     if (_swapChainContext != nullptr && _fgContext != nullptr && !_isActive &&
         (IsLowResMV() || nativeAA || (State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ||
          Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
     {
         auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetEnabledResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result), 0,
+                          1);
+        if (static_cast<int32_t>(result) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
 
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
@@ -744,13 +823,31 @@ void XeFG_Dx12::Deactivate()
         {
             LOG_DEBUG("Executing _uiCommandList[fIndex][{}]: {:X}", fIndex, (size_t) _uiCommandList[fIndex]);
             auto closeResult = _uiCommandList[fIndex]->Close();
+            XeFGTrace::Record(XeFGTrace::EventType::UiCommandListCloseResult, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_uiCommandList[fIndex]),
+                              reinterpret_cast<uint64_t>(_gameCommandQueue), _uiAllocatorFenceValues[fIndex], 0, 0,
+                              static_cast<int32_t>(closeResult), 0, static_cast<uint32_t>(fIndex));
 
             if (closeResult == S_OK)
+            {
+                XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsBegin,
+                                  reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_uiCommandList[fIndex]), _uiAllocatorFenceValues[fIndex],
+                                  0, 0, 0, 0, static_cast<uint32_t>(fIndex));
                 _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_uiCommandList[fIndex]);
+                XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsEnd,
+                                  reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_uiCommandList[fIndex]), _uiAllocatorFenceValues[fIndex],
+                                  0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+            }
             else
                 LOG_ERROR("_uiCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
 
-            _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[fIndex]);
+            auto signalResult = _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[fIndex]);
+            XeFGTrace::Record(XeFGTrace::EventType::UiQueueSignalResult, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_uiFence), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                              _uiAllocatorFenceValues[fIndex], 0, 0, static_cast<int32_t>(signalResult), 0,
+                              static_cast<uint32_t>(fIndex));
 
             _uiCommandListResetted[fIndex] = false;
         }
@@ -760,6 +857,11 @@ void XeFG_Dx12::Deactivate()
         if (_swapChainContext != nullptr)
         {
             result = XeFGProxy::SetEnabled()(_swapChainContext, false);
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGSetEnabledResult, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result),
+                              0, 0);
+            if (static_cast<int32_t>(result) < 0)
+                XeFGTrace::FlushAfterFailureBestEffort();
             if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
                 _isActive = false;
         }
@@ -780,12 +882,18 @@ void XeFG_Dx12::Deactivate()
 
 void XeFG_Dx12::DestroyFGContext()
 {
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyFGContextEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                      0, 0);
     Deactivate();
 
     if (_fgContext != nullptr)
         _fgContext = nullptr;
 
     ReleaseObjects();
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyFGContextExit, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
+                      0, 0);
 }
 
 bool XeFG_Dx12::Shutdown()
@@ -805,10 +913,16 @@ bool XeFG_Dx12::Shutdown()
 
 bool XeFG_Dx12::Dispatch()
 {
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), _frameCount, 0, 0, 0, 0, 0,
+                      static_cast<uint32_t>(_frameCount), static_cast<uint32_t>(_frameCount >> 32));
     LOG_FUNC();
 
     UINT64 willDispatchFrame = 0;
     auto fIndex = GetDispatchIndex(willDispatchFrame);
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterIndexResolve, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, willDispatchFrame, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex), static_cast<uint32_t>(willDispatchFrame));
     if (fIndex < 0)
         return false;
 
@@ -846,6 +960,12 @@ bool XeFG_Dx12::Dispatch()
 
         auto uiResult = XeFGProxy::SetUiCompositionState()(_swapChainContext, uiState);
 
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGSetUiCompositionResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(uiResult), 0,
+                          static_cast<uint32_t>(uiState));
+        if (static_cast<int32_t>(uiResult) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
+
         LogXeFGResult("SetUiCompositionState", uiResult);
     }
 
@@ -871,6 +991,13 @@ bool XeFG_Dx12::Dispatch()
 
             auto intResult = XeFGProxy::SetNumInterpolatedFrames()(
                 _swapChainContext, Config::Instance()->FGXeFGInterpolationCount.value_or_default());
+
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGSetNumInterpolatedFramesResult,
+                              reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext), 0,
+                              0, 0, 0, static_cast<int32_t>(intResult), 0,
+                              static_cast<uint32_t>(Config::Instance()->FGXeFGInterpolationCount.value_or_default()));
+            if (static_cast<int32_t>(intResult) < 0)
+                XeFGTrace::FlushAfterFailureBestEffort();
 
             _framesToInterpolate = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
 
@@ -915,11 +1042,21 @@ bool XeFG_Dx12::Dispatch()
 
     if (!_noHudless[fIndex])
     {
+        XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeHudlessLookup, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0, 0,
+                          static_cast<uint32_t>(fIndex));
         auto res = &_frameResources[fIndex][FG_ResourceType::HudlessColor];
+        XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterHudlessLookup, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(res), reinterpret_cast<uint64_t>(res->resource), 0, 0, 0, 0, 0,
+                          static_cast<uint32_t>(fIndex), static_cast<uint32_t>(res->validity));
         if (res->validity != FG_ResourceValidity::ValidNow)
         {
             res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
             res->frameIndex = fIndex;
+            XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeHudlessSetResource,
+                              reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(res),
+                              reinterpret_cast<uint64_t>(res->resource), reinterpret_cast<uint64_t>(res->cmdList), 0, 0,
+                              0, 0, static_cast<uint32_t>(fIndex), static_cast<uint32_t>(res->validity));
             SetResource(res);
         }
     }
@@ -935,10 +1072,18 @@ bool XeFG_Dx12::Dispatch()
         }
     }
 
-    XeFGProxy::EnableDebugFeature()(_swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES,
-                                    Config::Instance()->FGXeFGDebugView.value_or_default(), nullptr);
-    XeFGProxy::EnableDebugFeature()(_swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_SHOW_ONLY_INTERPOLATION,
-                                    state.fgOnlyGenerated, nullptr);
+    auto debugResult =
+        XeFGProxy::EnableDebugFeature()(_swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES,
+                                        Config::Instance()->FGXeFGDebugView.value_or_default(), nullptr);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGEnableDebugFeatureResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(debugResult), 0,
+                      0);
+
+    debugResult = XeFGProxy::EnableDebugFeature()(
+        _swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_SHOW_ONLY_INTERPOLATION, state.fgOnlyGenerated, nullptr);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGEnableDebugFeatureResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(debugResult), 0,
+                      1);
 
     xefg_swapchain_frame_constant_data_t constData = {};
 
@@ -1019,6 +1164,11 @@ bool XeFG_Dx12::Dispatch()
     auto frameId = static_cast<uint32_t>(willDispatchFrame);
 
     auto result = XeFGProxy::TagFrameConstants()(_swapChainContext, frameId, &constData);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGTagFrameConstantsResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result), 0,
+                      frameId);
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("TagFrameConstants", result);
@@ -1031,6 +1181,11 @@ bool XeFG_Dx12::Dispatch()
     }
 
     result = XeFGProxy::SetPresentId()(_swapChainContext, frameId);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGSetPresentIdResult, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, static_cast<int32_t>(result), 0,
+                      frameId);
+    if (static_cast<int32_t>(result) < 0)
+        XeFGTrace::FlushAfterFailureBestEffort();
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
         LogXeFGResult("SetPresentId", result);
@@ -1081,6 +1236,12 @@ bool XeFG_Dx12::Dispatch()
                                     (UINT) Config::Instance()->FGRectHeight.value_or(_interpolationHeight[fIndex]) };
 
         result = XeFGProxy::D3D12TagFrameResource()(_swapChainContext, (ID3D12CommandList*) 1, frameId, &backbuffer);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGTagFrameResourceResult, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(_swapChainContext),
+                          reinterpret_cast<uint64_t>(backbuffer.pResource), 0, 0, 0, static_cast<int32_t>(result), 0,
+                          frameId);
+        if (static_cast<int32_t>(result) < 0)
+            XeFGTrace::FlushAfterFailureBestEffort();
 
         if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
@@ -1340,6 +1501,12 @@ bool XeFG_Dx12::Present()
 {
     auto fIndex = GetIndexWillBeDispatched();
     LOG_DEBUG("fIndex: {}", fIndex);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentBeforeUiWork, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
 
     if (Config::Instance()->FGDrawUIOverFG.value_or_default())
     {
@@ -1374,6 +1541,13 @@ bool XeFG_Dx12::Present()
             LOG_WARN("UI resource is nullptr");
         }
     }
+
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentAfterUiWork, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentBeforeScWork, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
 
     if (IsActive() && !IsPaused())
     {
@@ -1415,13 +1589,31 @@ bool XeFG_Dx12::Present()
         {
             LOG_DEBUG("Executing _uiCommandList[{}]: {:X}", fIndex, (size_t) _uiCommandList[fIndex]);
             auto closeResult = _uiCommandList[fIndex]->Close();
+            XeFGTrace::Record(XeFGTrace::EventType::UiCommandListCloseResult, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_uiCommandList[fIndex]),
+                              reinterpret_cast<uint64_t>(_gameCommandQueue), _uiAllocatorFenceValues[fIndex], 0, 0,
+                              static_cast<int32_t>(closeResult), 0, static_cast<uint32_t>(fIndex));
 
             if (closeResult == S_OK)
+            {
+                XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsBegin,
+                                  reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_uiCommandList[fIndex]), _uiAllocatorFenceValues[fIndex],
+                                  0, 0, 0, 0, static_cast<uint32_t>(fIndex));
                 _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_uiCommandList[fIndex]);
+                XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsEnd,
+                                  reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_uiCommandList[fIndex]), _uiAllocatorFenceValues[fIndex],
+                                  0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+            }
             else
                 LOG_ERROR("_uiCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
 
-            _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[fIndex]);
+            auto signalResult = _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[fIndex]);
+            XeFGTrace::Record(XeFGTrace::EventType::UiQueueSignalResult, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_uiFence), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                              _uiAllocatorFenceValues[fIndex], 0, 0, static_cast<int32_t>(signalResult), 0,
+                              static_cast<uint32_t>(fIndex));
 
             _uiCommandListResetted[fIndex] = false;
         }
@@ -1430,15 +1622,33 @@ bool XeFG_Dx12::Present()
         {
             LOG_DEBUG("Executing _scCommandList[{}]: {:X}", fIndex, (size_t) _scCommandList[fIndex]);
             auto closeResult = _scCommandList[fIndex]->Close();
+            XeFGTrace::Record(XeFGTrace::EventType::ScCommandListCloseResult, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_scCommandList[fIndex]),
+                              reinterpret_cast<uint64_t>(_gameCommandQueue), 0, 0, 0, static_cast<int32_t>(closeResult),
+                              0, static_cast<uint32_t>(fIndex));
 
             if (closeResult == S_OK)
+            {
+                XeFGTrace::Record(XeFGTrace::EventType::ScExecuteCommandListsBegin,
+                                  reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_scCommandList[fIndex]), 0, 0, 0, 0, 0,
+                                  static_cast<uint32_t>(fIndex));
                 _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_scCommandList[fIndex]);
+                XeFGTrace::Record(XeFGTrace::EventType::ScExecuteCommandListsEnd,
+                                  reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                                  reinterpret_cast<uint64_t>(_scCommandList[fIndex]), 0, 0, 0, 0, 0,
+                                  static_cast<uint32_t>(fIndex));
+            }
             else
                 LOG_ERROR("_scCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
 
             _scCommandListResetted[fIndex] = false;
         }
     }
+
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentAfterScWork, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
 
     if ((_fgFramePresentId - _lastFGFramePresentId) > 3 && IsActive() && !_waitingNewFrameData)
     {
@@ -1450,11 +1660,20 @@ bool XeFG_Dx12::Present()
 
     _fgFramePresentId++;
 
-    return Dispatch();
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentBeforeDispatch, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    const auto dispatchResult = Dispatch();
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGPresentAfterDispatch, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_gameCommandQueue), 0,
+                      0, 0, 0, 0, static_cast<uint32_t>(fIndex), dispatchResult ? 1u : 0u);
+    return dispatchResult;
 }
 
 bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::SetResourceEnter, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(inputResource));
     if (inputResource == nullptr || inputResource->resource == nullptr ||
         (inputResource->type != FG_ResourceType::UIColor && (!IsActive() || IsPaused())))
     {
@@ -1469,7 +1688,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
 
     auto& type = inputResource->type;
 
+    XeFGTrace::Record(XeFGTrace::EventType::SetResourceBeforeMutexWait, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(inputResource), reinterpret_cast<uint64_t>(inputResource->resource),
+                      static_cast<uint64_t>(fIndex), 0, 0, 0, 0, static_cast<uint32_t>(fIndex),
+                      static_cast<uint32_t>(type));
     std::unique_lock<std::shared_mutex> lock(_resourceMutex[fIndex]);
+    XeFGTrace::Record(XeFGTrace::EventType::SetResourceAfterMutexAcquire, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(inputResource), reinterpret_cast<uint64_t>(inputResource->resource),
+                      static_cast<uint64_t>(fIndex), 0, 0, 0, 0, static_cast<uint32_t>(fIndex),
+                      static_cast<uint32_t>(type));
 
     // This is mostly useful for cases where the user has manually set validity as ValidNow
     if (!inputResource->cmdList && inputResource->validity != FG_ResourceValidity::UntilPresent &&
@@ -1679,8 +1906,19 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
             (XeFGProxy::SetUiCompositionState() != nullptr || Config::Instance()->FGDrawUIOverFG.value_or_default()))
         {
             auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
+            XeFGTrace::Record(
+                XeFGTrace::EventType::SetResourceBeforeTagFrameResource, reinterpret_cast<uint64_t>(_swapChainContext),
+                reinterpret_cast<uint64_t>(fResource->cmdList), reinterpret_cast<uint64_t>(resourceParam.pResource),
+                frameId, 0, 0, 0, 0, static_cast<uint32_t>(fIndex),
+                (static_cast<uint32_t>(type) << 16) | static_cast<uint32_t>(fResource->validity));
             auto result =
                 XeFGProxy::D3D12TagFrameResource()(_swapChainContext, fResource->cmdList, frameId, &resourceParam);
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGTagFrameResourceResult, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_swapChainContext),
+                              reinterpret_cast<uint64_t>(resourceParam.pResource), 0, 0, 0,
+                              static_cast<int32_t>(result), 0, frameId);
+            if (static_cast<int32_t>(result) < 0)
+                XeFGTrace::FlushAfterFailureBestEffort();
             LOG_DEBUG("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,
                       magic_enum::enum_name(type), magic_enum::enum_name(result), (int32_t) result);
 
@@ -1725,11 +1963,16 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
     return ReleaseSwapchainLocked(hwnd);
 }
 
-bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy)
+bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, IUnknown* finalProxy,
+                                                      std::function<void()> releaseFinalProxy)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseEnter, reinterpret_cast<uint64_t>(finalProxy),
+                      reinterpret_cast<uint64_t>(this), 0, 0,
+                      _swapchainReleaseInProgress.load(std::memory_order_acquire),
+                      _swapchainReleaseOwnerThread.load(std::memory_order_acquire));
     std::unique_lock lifecycleLock(_swapchainLifecycleMutex);
 
-    if (!releaseFinalProxy)
+    if (finalProxy == nullptr || !releaseFinalProxy)
     {
         LOG_ERROR("[XeFG][Lifecycle] action = release_swapchain_aborted, "
                   "reason = missing_final_proxy_release");
@@ -1737,7 +1980,6 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
     }
 
     auto& state = State::Instance();
-    auto* const finalProxy = state.currentFGSwapchain;
     bool finalProxyReleased = false;
     auto releaseFinalProxyOnce = [&]()
     {
@@ -1751,10 +1993,25 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
         if (state.currentFGSwapchain == finalProxy)
             state.currentFGSwapchain = nullptr;
 
-        LOG_DEBUG("[XeFG][Ownership] action = final_proxy_aliases_cleared, ptr = {:X}", (size_t) finalProxy);
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseBefore, reinterpret_cast<uint64_t>(finalProxy),
+                          reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext));
         releaseFinalProxy();
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseAfter, reinterpret_cast<uint64_t>(finalProxy),
+                          reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext));
         finalProxyReleased = true;
     };
+
+    // The lifecycle associated with this proxy may already have been retired
+    // while this final COM release was waiting for the lifecycle mutex. Never
+    // let an old proxy tear down a newer XeFG lifecycle.
+    if (state.currentFGSwapchain != finalProxy)
+    {
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGStaleFinalProxyReleaseOnly, reinterpret_cast<uint64_t>(finalProxy),
+                          reinterpret_cast<uint64_t>(state.currentFGSwapchain),
+                          reinterpret_cast<uint64_t>(_swapChainContext));
+        releaseFinalProxyOnce();
+        return true;
+    }
 
     const bool releaseSucceeded = ReleaseSwapchainLocked(hwnd, releaseFinalProxyOnce);
 
@@ -1775,6 +2032,10 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
 
 bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy)
 {
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedEnter, 0, reinterpret_cast<uint64_t>(this),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0,
+                      _swapchainReleaseInProgress.load(std::memory_order_relaxed) ? 1u : 0u,
+                      _swapchainRecreationBlocked ? 1u : 0u);
     if (hwnd != _hwnd || _hwnd == NULL)
         return false;
 
@@ -1819,7 +2080,13 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
     MenuOverlayDx::CleanupRenderTarget(true, NULL);
 
     if (_fgContext != nullptr)
+    {
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeDestroyFGContext, 0,
+                          reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext));
         DestroyFGContext();
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedAfterDestroyFGContext, 0,
+                          reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext));
+    }
 
     if (releaseFinalProxy)
     {
@@ -1831,7 +2098,14 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
     {
         if (_swapChainContext != nullptr)
         {
-            if (!DestroySwapchainContext())
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeDestroySwapchainContext, 0,
+                              reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext));
+            const auto contextBeforeDestroy = _swapChainContext;
+            const bool destroySucceeded = DestroySwapchainContext();
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedAfterDestroySwapchainContext, 0,
+                              reinterpret_cast<uint64_t>(contextBeforeDestroy), reinterpret_cast<uint64_t>(_fgContext),
+                              0, 0, 0, destroySucceeded ? S_OK : E_FAIL);
+            if (!destroySucceeded)
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = release_swapchain_aborted, reason = destroy_failed, "
                           "context = {:X}, swapchain = {:X}",
@@ -1851,6 +2125,8 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
         State::Instance().currentFGSwapchain = nullptr;
     }
 
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeReleaseObjects, 0,
+                      reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext));
     ReleaseObjects();
 
     if (useConfiguredMutex)

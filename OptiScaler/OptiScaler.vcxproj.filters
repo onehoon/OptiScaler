@@ -299,6 +299,9 @@
     <ClInclude Include="OwnedMutex.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="diagnostics\XeFGTrace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="shaders\depth_scale\DS_Common.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -1224,6 +1227,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="framegen\xefg\XeFG_Dx12.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="diagnostics\XeFGTrace.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="shaders\hudless_compare\HC_Dx12.cpp">

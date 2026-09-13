@@ -46,6 +46,8 @@ class OwnedMutex
     }
 
     uint32_t getOwner() { return owner.load(std::memory_order_seq_cst); }
+
+    DWORD getOwnerThread() const { return ownerThread.load(std::memory_order_acquire); }
 };
 
 class OwnedLockGuard

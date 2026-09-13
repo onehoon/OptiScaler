@@ -57,6 +57,8 @@ class FGHooks
     inline static UINT _lastPresentFlags = 0;
     inline static double _lastFGFrameTime = -1.0;
 
+    static uint32_t TraceFlags();
+
     static void HookFGSwapchain(IDXGISwapChain* pSwapChain);
 
     static HRESULT hkSetFullscreenState(IDXGISwapChain* This, BOOL Fullscreen, IDXGIOutput* pTarget);

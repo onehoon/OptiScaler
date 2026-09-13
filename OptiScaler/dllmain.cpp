@@ -48,6 +48,7 @@
 #include <version_check.h>
 #include <misc/IdentifyGpu.h>
 #include <sha1/sha1.hpp>
+#include <diagnostics/XeFGTrace.h>
 
 static std::vector<HMODULE> _asiHandles;
 static std::vector<std::filesystem::directory_entry> _lateLoadingEntries;
@@ -2203,6 +2204,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         spdlog::info("");
         spdlog::info("DLL_PROCESS_DETACH");
         spdlog::info("Unloading OptiScaler");
+        XeFGTrace::Shutdown();
         CloseLogger();
 
         break;

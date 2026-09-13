@@ -4,6 +4,7 @@
 #include "Config.h"
 #include "Util.h"
 #include "MathUtils.h"
+#include <diagnostics/XeFGTrace.h>
 
 #include "resource.h"
 #include "NVNGX_Parameter.h"
@@ -704,17 +705,39 @@ static Fsr3::FfxErrorCode hkffxFsr3ConfigureFrameGeneration(void* context, Fsr3:
     {
         LOG_DEBUG("frameGenerationEnabled: {} ", config->frameGenerationEnabled);
 
-        s.fsrfgInputActive = config->frameGenerationEnabled;
+        const bool frameGenEnabled = config->frameGenerationEnabled;
+        const bool globalFgEnabled = Config::Instance()->FGEnabled.value_or_default();
+        const bool isActive = fg->IsActive();
+        bool isPaused = false;
+        if (frameGenEnabled && !isActive && globalFgEnabled)
+            isPaused = fg->IsPaused();
 
-        if (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
+        s.fsrfgInputActive = frameGenEnabled;
+
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
+                          2);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
+                          2);
+
+        if (frameGenEnabled && !isActive && globalFgEnabled)
         {
-            if (!fg->IsPaused())
+            if (!isPaused)
             {
+                XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateBefore, 0, reinterpret_cast<uint64_t>(fg),
+                                  reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0, 2);
                 fg->Activate();
+                XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateAfter, 0, reinterpret_cast<uint64_t>(fg),
+                                  reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0, 0, 2);
                 fg->ResetCounters();
             }
         }
-        else if (!config->frameGenerationEnabled && fg->IsActive())
+        else if (!frameGenEnabled && isActive)
         {
             fg->Deactivate();
             fg->ResetCounters();
@@ -788,17 +811,39 @@ static Fsr3::FfxErrorCode hkffxSetFrameGenerationConfigToSwapchainDX12(Fsr3::Ffx
     {
         LOG_DEBUG("frameGenerationEnabled: {} ", config->frameGenerationEnabled);
 
-        s.fsrfgInputActive = config->frameGenerationEnabled;
+        const bool frameGenEnabled = config->frameGenerationEnabled;
+        const bool globalFgEnabled = Config::Instance()->FGEnabled.value_or_default();
+        const bool isActive = fg->IsActive();
+        bool isPaused = false;
+        if (frameGenEnabled && !isActive && globalFgEnabled)
+            isPaused = fg->IsPaused();
 
-        if (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
+        s.fsrfgInputActive = frameGenEnabled;
+
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0,
+                          0,
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
+                          2);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0,
+                          0,
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
+                          2);
+
+        if (frameGenEnabled && !isActive && globalFgEnabled)
         {
-            if (!fg->IsPaused())
+            if (!isPaused)
             {
+                XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateBefore, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0,
+                                  0, 0, 0, 2);
                 fg->Activate();
+                XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateAfter, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0,
+                                  0, 0, 0, 0, 2);
                 fg->ResetCounters();
             }
         }
-        else if (!config->frameGenerationEnabled && fg->IsActive())
+        else if (!frameGenEnabled && isActive)
         {
             fg->Deactivate();
             fg->ResetCounters();
@@ -1304,13 +1349,27 @@ void FSR3FG::SetUpscalerInputs(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_P
     if (State::Instance().activeFgInput != FGInput::FSRFG30 || fg == nullptr || _device == nullptr)
         return;
 
+    uint64_t frameCountAfter = 0;
     {
         std::lock_guard<std::mutex> lock(_newFrameMutex);
+        const auto frameCountBefore = fg->FrameCount();
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGFrameBoundaryEnter, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(_device), frameCountBefore, 0, 0, 0, 0, 2);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGStartNewFrameBefore, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(_device), frameCountBefore, 0, 0, 0, 0, 2);
         fg->StartNewFrame();
         _uiRes[fg->GetIndex()] = {};
+        frameCountAfter = fg->FrameCount();
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGStartNewFrameAfter, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(_device), frameCountAfter, 0, 0, 0, 0,
+                          static_cast<uint32_t>(fg->GetIndex()), 2);
     }
 
+    XeFGTrace::Record(XeFGTrace::EventType::FSRFGEvaluateStateBefore, 0, reinterpret_cast<uint64_t>(fg),
+                      reinterpret_cast<uint64_t>(_device), frameCountAfter, 0, 0, 0, 0, 2);
     fg->EvaluateState(_device, _fgConst);
+    XeFGTrace::Record(XeFGTrace::EventType::FSRFGEvaluateStateAfter, 0, reinterpret_cast<uint64_t>(fg),
+                      reinterpret_cast<uint64_t>(_device), frameCountAfter, 0, 0, 0, 0, 2);
 
     // FSR Camera values
     float cameraNear = 0.0f;

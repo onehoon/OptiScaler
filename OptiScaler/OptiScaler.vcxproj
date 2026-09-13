@@ -474,6 +474,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClInclude Include="misc\FrameLimit.h" />
     <ClInclude Include="misc\Quirks.h" />
     <ClInclude Include="OwnedMutex.h" />
+    <ClInclude Include="diagnostics\XeFGTrace.h" />
     <ClInclude Include="proxies\D3D12_Proxy.h" />
     <ClInclude Include="proxies\Dxgi_Proxy.h" />
     <ClInclude Include="proxies\IGDExt_Proxy.h" />
@@ -697,6 +698,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="inputs\FG\FSR3_Dx12_FG.cpp" />
     <ClCompile Include="inputs\FG\Streamline_Inputs_Dx12.cpp" />
     <ClCompile Include="framegen\xefg\XeFG_Dx12.cpp" />
+    <ClCompile Include="diagnostics\XeFGTrace.cpp" />
     <ClCompile Include="hooks\Streamline_Hooks.cpp" />
     <ClCompile Include="hudfix\Hudfix_Dx12.cpp" />
     <ClCompile Include="include\imgui\imgui_impl_dx11.cpp">

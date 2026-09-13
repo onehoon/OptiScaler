@@ -2,6 +2,7 @@
 #include "IFGFeature_Dx12.h"
 #include <State.h>
 #include <Config.h>
+#include <diagnostics/XeFGTrace.h>
 
 #include <magic_enum.hpp>
 
@@ -60,6 +61,9 @@ bool IFGFeature_Dx12::WaitForUIAllocator(UINT index)
         return true;
 
     auto result = _uiFence->SetEventOnCompletion(fenceValue, _uiFenceEvent);
+    XeFGTrace::Record(XeFGTrace::EventType::UiFenceSetEventResult, 0, reinterpret_cast<uint64_t>(_uiFence),
+                      reinterpret_cast<uint64_t>(_uiFenceEvent), fenceValue, 0, 0, static_cast<int32_t>(result), 0,
+                      index);
     if (FAILED(result))
     {
         LOG_ERROR("UI allocator fence SetEventOnCompletion failed. slot {}, fence {}, completed {}, result {:X}", index,
@@ -68,6 +72,8 @@ bool IFGFeature_Dx12::WaitForUIAllocator(UINT index)
     }
 
     const auto waitResult = WaitForSingleObject(_uiFenceEvent, 5000);
+    XeFGTrace::Record(XeFGTrace::EventType::UiFenceWaitResult, 0, reinterpret_cast<uint64_t>(_uiFence),
+                      reinterpret_cast<uint64_t>(_uiFenceEvent), fenceValue, 0, 0, 0, 0, waitResult, index);
     if (waitResult != WAIT_OBJECT_0)
     {
         LOG_ERROR("UI allocator fence wait failed. slot {}, fence {}, completed {}, waitResult {:X}", index, fenceValue,
@@ -94,16 +100,28 @@ bool IFGFeature_Dx12::SubmitUICommandList(UINT index)
               _uiAllocatorFenceValues[index]);
 
     auto closeResult = _uiCommandList[index]->Close();
+    XeFGTrace::Record(XeFGTrace::EventType::UiCommandListCloseResult, 0,
+                      reinterpret_cast<uint64_t>(_uiCommandList[index]), reinterpret_cast<uint64_t>(_gameCommandQueue),
+                      _uiAllocatorFenceValues[index], 0, 0, static_cast<int32_t>(closeResult), 0, index);
     if (FAILED(closeResult))
     {
         LOG_ERROR("_uiCommandList[{}]->Close() error: {:X}", index, (UINT) closeResult);
         return false;
     }
 
+    XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsBegin, 0,
+                      reinterpret_cast<uint64_t>(_gameCommandQueue), reinterpret_cast<uint64_t>(_uiCommandList[index]),
+                      _uiAllocatorFenceValues[index], 0, 0, 0, 0, index);
     _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_uiCommandList[index]);
+    XeFGTrace::Record(XeFGTrace::EventType::UiExecuteCommandListsEnd, 0, reinterpret_cast<uint64_t>(_gameCommandQueue),
+                      reinterpret_cast<uint64_t>(_uiCommandList[index]), _uiAllocatorFenceValues[index], 0, 0, 0, 0,
+                      index);
     _uiCommandListResetted[index] = false;
 
     auto signalResult = _gameCommandQueue->Signal(_uiFence, _uiAllocatorFenceValues[index]);
+    XeFGTrace::Record(XeFGTrace::EventType::UiQueueSignalResult, 0, reinterpret_cast<uint64_t>(_uiFence),
+                      reinterpret_cast<uint64_t>(_gameCommandQueue), _uiAllocatorFenceValues[index], 0, 0,
+                      static_cast<int32_t>(signalResult), 0, index);
     if (FAILED(signalResult))
     {
         LOG_ERROR("UI allocator fence signal failed. slot {}, fence {}, result {:X}", index,
@@ -148,10 +166,18 @@ ID3D12GraphicsCommandList* IFGFeature_Dx12::GetUICommandList(int index)
             return nullptr;
 
         auto result = _uiCommandAllocator[index]->Reset();
+        XeFGTrace::Record(XeFGTrace::EventType::UiAllocatorResetResult, 0,
+                          reinterpret_cast<uint64_t>(_uiCommandAllocator[index]),
+                          reinterpret_cast<uint64_t>(_uiCommandList[index]), 0, 0, 0, static_cast<int32_t>(result), 0,
+                          static_cast<uint32_t>(index));
 
         if (result == S_OK)
         {
             result = _uiCommandList[index]->Reset(_uiCommandAllocator[index], nullptr);
+            XeFGTrace::Record(XeFGTrace::EventType::UiCommandListResetResult, 0,
+                              reinterpret_cast<uint64_t>(_uiCommandList[index]),
+                              reinterpret_cast<uint64_t>(_uiCommandAllocator[index]), 0, 0, 0,
+                              static_cast<int32_t>(result), 0, static_cast<uint32_t>(index));
 
             if (result == S_OK)
             {
@@ -199,6 +225,9 @@ ID3D12GraphicsCommandList* IFGFeature_Dx12::GetSCCommandList(int index)
         {
             LOG_DEBUG("Executing _scCommandList[{}]: {:X}", i, (size_t) _scCommandList[i]);
             auto closeResult = _scCommandList[i]->Close();
+            XeFGTrace::Record(XeFGTrace::EventType::ScCommandListCloseResult, 0,
+                              reinterpret_cast<uint64_t>(_scCommandList[i]), 0, 0, 0, 0,
+                              static_cast<int32_t>(closeResult), 0, static_cast<uint32_t>(i));
 
             if (closeResult != S_OK)
                 LOG_ERROR("_scCommandList[{}]->Close() error: {:X}", i, (UINT) closeResult);
@@ -210,10 +239,18 @@ ID3D12GraphicsCommandList* IFGFeature_Dx12::GetSCCommandList(int index)
     if (!_scCommandListResetted[index])
     {
         auto result = _scCommandAllocator[index]->Reset();
+        XeFGTrace::Record(XeFGTrace::EventType::ScAllocatorResetResult, 0,
+                          reinterpret_cast<uint64_t>(_scCommandAllocator[index]),
+                          reinterpret_cast<uint64_t>(_scCommandList[index]), 0, 0, 0, static_cast<int32_t>(result), 0,
+                          static_cast<uint32_t>(index));
 
         if (result == S_OK)
         {
             result = _scCommandList[index]->Reset(_scCommandAllocator[index], nullptr);
+            XeFGTrace::Record(XeFGTrace::EventType::ScCommandListResetResult, 0,
+                              reinterpret_cast<uint64_t>(_scCommandList[index]),
+                              reinterpret_cast<uint64_t>(_scCommandAllocator[index]), 0, 0, 0,
+                              static_cast<int32_t>(result), 0, static_cast<uint32_t>(index));
 
             if (result == S_OK)
                 _scCommandListResetted[index] = true;
