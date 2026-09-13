@@ -968,11 +968,22 @@ bool XeFG_Dx12::Dispatch()
         xefg_swapchain_d3d12_resource_data_t backbuffer = {};
         backbuffer.type = XEFG_SWAPCHAIN_RES_BACKBUFFER;
         backbuffer.validity = XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
-        backbuffer.resourceBase = { (UINT) Config::Instance()->FGRectLeft.value_or(left),
-                                    (UINT) Config::Instance()->FGRectTop.value_or(top) };
-        backbuffer.resourceSize = { static_cast<uint32_t>(
-                                        Config::Instance()->FGRectWidth.value_or(_interpolationWidth[fIndex])),
-                                    (UINT) Config::Instance()->FGRectHeight.value_or(_interpolationHeight[fIndex]) };
+
+        const auto originalBaseX = (UINT) Config::Instance()->FGRectLeft.value_or(left);
+        const auto originalBaseY = (UINT) Config::Instance()->FGRectTop.value_or(top);
+        const auto originalWidth =
+            static_cast<uint32_t>(Config::Instance()->FGRectWidth.value_or(_interpolationWidth[fIndex]));
+        const auto originalHeight = (UINT) Config::Instance()->FGRectHeight.value_or(_interpolationHeight[fIndex]);
+
+        backbuffer.resourceBase = { 0, 0 };
+        backbuffer.resourceSize = { state.currentSwapchainDesc.BufferDesc.Width,
+                                    state.currentSwapchainDesc.BufferDesc.Height };
+
+        LOG_INFO("[RES-POC][XEFG-BACKBUFFER-FULL-SWAPCHAIN] frame={} index={} originalBase={},{} originalSize={}x{} "
+                 "forcedBase={},{} forcedSize={}x{}",
+                 frameId, fIndex, originalBaseX, originalBaseY, originalWidth, originalHeight,
+                 backbuffer.resourceBase.x, backbuffer.resourceBase.y, backbuffer.resourceSize.x,
+                 backbuffer.resourceSize.y);
 
         LOG_INFO(
             "[RES-DIAG][XEFG-BACKBUFFER] frame={} index={} activeInput={} swapchain={}x{} interpolation={}x{} "
