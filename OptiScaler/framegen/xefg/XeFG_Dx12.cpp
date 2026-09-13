@@ -1558,6 +1558,9 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
         type == FG_ResourceType::HudlessColor && ScaleHudlessToSwapchain(fResource, inputResource, fIndex, frameId);
     if (hudlessScaled)
     {
+        if (fResource->validity == FG_ResourceValidity::ValidButMakeCopy)
+            fResource->validity = FG_ResourceValidity::UntilPresent;
+
         LOG_INFO("[RES-POC][HUDLESS-SCALE] index={} XeFG submission uses the scaled intermediate", fIndex);
     }
 
@@ -1602,7 +1605,8 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
     }
 
     // We usually don't copy any resources for XeFG, the ones with this tag are the exception
-    if (inputResource->cmdList != nullptr && fResource->validity == FG_ResourceValidity::ValidButMakeCopy)
+    if (!hudlessScaled && inputResource->cmdList != nullptr &&
+        fResource->validity == FG_ResourceValidity::ValidButMakeCopy)
     {
         LOG_DEBUG("Making a resource copy of: {}", magic_enum::enum_name(type));
 
@@ -1668,7 +1672,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
             // HACK: XeFG seems to crash if the resource is in COPY_SOURCE state
             // even though the docs say it's the preferred state
             // https://github.com/intel/xess/issues/47
-            if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
+            if (!hudlessScaled && inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
             {
                 ResourceBarrier(inputResource->cmdList, inputResource->resource, inputResource->state,
                                 D3D12_RESOURCE_STATE_COPY_DEST);
@@ -1725,7 +1729,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
         }
 
         // Potentially we don't need to restore but do it just to be safe
-        if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
+        if (!hudlessScaled && inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
         {
             ResourceBarrier(inputResource->cmdList, inputResource->resource, D3D12_RESOURCE_STATE_COPY_DEST,
                             inputResource->state);

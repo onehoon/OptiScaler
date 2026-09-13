@@ -29,6 +29,20 @@ static UpscaleShaderConstants fsr1Constants {};
 bool OS_Dx12::CreateBufferResource(ID3D12Device* InDevice, ID3D12Resource* InSource, uint32_t InWidth,
                                    uint32_t InHeight, D3D12_RESOURCE_STATES InState)
 {
+    if (InSource == nullptr)
+        return false;
+
+    auto expectedDesc = InSource->GetDesc();
+    if (InWidth != 0 && InHeight != 0)
+    {
+        expectedDesc.Width = InWidth;
+        expectedDesc.Height = InHeight;
+    }
+
+    const bool bufferWillChange = _buffer == nullptr || _buffer->GetDesc().Width != expectedDesc.Width ||
+                                  _buffer->GetDesc().Height != expectedDesc.Height ||
+                                  _buffer->GetDesc().Format != expectedDesc.Format;
+
     auto resourceFlags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS |
                          D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
 
@@ -38,7 +52,8 @@ bool OS_Dx12::CreateBufferResource(ID3D12Device* InDevice, ID3D12Resource* InSou
     if (result)
     {
         _buffer->SetName(L"OS_Buffer");
-        _bufferState = InState;
+        if (bufferWillChange)
+            _bufferState = InState;
     }
 
     return result;
