@@ -1257,21 +1257,12 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 State::Instance().currentFG->ReleaseSwapchain(_hwnd);
             }
 
-            LOG_DEBUG("FG Swapchain released, clearing currentFGSwapchain");
-            State::Instance().currentFGSwapchain = nullptr;
+            LOG_DEBUG("FG Swapchain released, clearing public proxy aliases");
+            if (State::Instance().currentSwapchain == This)
+                State::Instance().currentSwapchain = nullptr;
 
-            if (State::Instance().currentWrappedSwapchain != nullptr &&
-                State::Instance().currentSwapchainDesc.OutputWindow == _hwnd)
-            {
-                auto refCount = State::Instance().currentWrappedSwapchain->Release();
-
-                while (refCount > 0 && refCount < 0xffffff00)
-                {
-                    refCount = State::Instance().currentWrappedSwapchain->Release();
-                }
-
-                State::Instance().currentWrappedSwapchain = nullptr;
-            }
+            if (State::Instance().currentFGSwapchain == This)
+                State::Instance().currentFGSwapchain = nullptr;
 
             skipReleaseChecks = false;
 

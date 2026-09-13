@@ -298,6 +298,10 @@ class State
 
     IFeature* currentFeature = nullptr;
     IFGFeature_Dx12* currentFG = nullptr;
+    // Swapchain tracking aliases.
+    // Storing a pointer here does not acquire a COM reference and does not grant
+    // permission to Release() it. Lifetime and cleanup authority remain with the
+    // concrete object owner that acquired or accepted the corresponding reference.
     IDXGISwapChain* currentSwapchain = nullptr;
     IDXGISwapChain* currentWrappedSwapchain = nullptr;
     IDXGISwapChain* currentRealSwapchain = nullptr;
