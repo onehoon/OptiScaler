@@ -81,8 +81,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 
         if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
-            LOG_ERROR("SetLoggingCallback error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-            return false;
+            LogXeFGResult("SetLoggingCallback", result);
         }
 
         // if (XeLLProxy::Context() == nullptr)
