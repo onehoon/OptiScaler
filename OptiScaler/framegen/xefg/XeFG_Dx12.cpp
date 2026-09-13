@@ -2020,10 +2020,10 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
 
 bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy)
 {
-    XeFGTrace::Record(
-        XeFGTrace::EventType::XeFGReleaseLockedEnter, reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
-        reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0,
-        _swapchainReleaseInProgress.load(std::memory_order_relaxed) ? 1u : 0u, _swapchainRecreationBlocked ? 1u : 0u);
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedEnter, 0, reinterpret_cast<uint64_t>(this),
+                      reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0,
+                      _swapchainReleaseInProgress.load(std::memory_order_relaxed) ? 1u : 0u,
+                      _swapchainRecreationBlocked ? 1u : 0u);
     if (hwnd != _hwnd || _hwnd == NULL)
         return false;
 
@@ -2069,12 +2069,10 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
 
     if (_fgContext != nullptr)
     {
-        XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeDestroyFGContext,
-                          reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeDestroyFGContext, 0,
                           reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext));
         DestroyFGContext();
-        XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedAfterDestroyFGContext,
-                          reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedAfterDestroyFGContext, 0,
                           reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext));
     }
 
@@ -2088,13 +2086,11 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
     {
         if (_swapChainContext != nullptr)
         {
-            XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeDestroySwapchainContext,
-                              reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeDestroySwapchainContext, 0,
                               reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext));
             const auto contextBeforeDestroy = _swapChainContext;
             const bool destroySucceeded = DestroySwapchainContext();
-            XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedAfterDestroySwapchainContext,
-                              reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
+            XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedAfterDestroySwapchainContext, 0,
                               reinterpret_cast<uint64_t>(contextBeforeDestroy), reinterpret_cast<uint64_t>(_fgContext),
                               0, 0, 0, destroySucceeded ? S_OK : E_FAIL);
             if (!destroySucceeded)
@@ -2117,8 +2113,7 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
         State::Instance().currentFGSwapchain = nullptr;
     }
 
-    XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeReleaseObjects,
-                      reinterpret_cast<uint64_t>(State::Instance().currentFGSwapchain),
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGReleaseLockedBeforeReleaseObjects, 0,
                       reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext));
     ReleaseObjects();
 
