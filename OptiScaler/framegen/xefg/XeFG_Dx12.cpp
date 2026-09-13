@@ -939,6 +939,8 @@ bool XeFG_Dx12::Dispatch()
     {
         uint32_t left = 0;
         uint32_t top = 0;
+        int calculatedLeft = 0;
+        int calculatedTop = 0;
 
         if (_interpolationWidth[fIndex] == 0 && _interpolationHeight[fIndex] == 0)
         {
@@ -948,12 +950,12 @@ bool XeFG_Dx12::Dispatch()
         }
         else
         {
-            auto calculatedLeft =
+            calculatedLeft =
                 ((int) state.currentSwapchainDesc.BufferDesc.Width - (int) _interpolationWidth[fIndex]) / 2;
             if (calculatedLeft > 0)
                 left = Config::Instance()->FGRectLeft.value_or(_interpolationLeft[fIndex].value_or(calculatedLeft));
 
-            auto calculatedTop =
+            calculatedTop =
                 ((int) state.currentSwapchainDesc.BufferDesc.Height - (int) _interpolationHeight[fIndex]) / 2;
             if (calculatedTop > 0)
                 top = Config::Instance()->FGRectTop.value_or(_interpolationTop[fIndex].value_or(calculatedTop));
@@ -971,6 +973,19 @@ bool XeFG_Dx12::Dispatch()
         backbuffer.resourceSize = { static_cast<uint32_t>(
                                         Config::Instance()->FGRectWidth.value_or(_interpolationWidth[fIndex])),
                                     (UINT) Config::Instance()->FGRectHeight.value_or(_interpolationHeight[fIndex]) };
+
+        LOG_INFO(
+            "[RES-DIAG][XEFG-BACKBUFFER] frame={} index={} activeInput={} swapchain={}x{} interpolation={}x{} "
+            "interpolationBase={},{} calculatedBase={},{} overrideLeft={}({}) overrideTop={}({}) overrideWidth={}({}) "
+            "overrideHeight={}({}) finalBase={},{} finalSize={}x{}",
+            frameId, fIndex, magic_enum::enum_name(state.activeFgInput), state.currentSwapchainDesc.BufferDesc.Width,
+            state.currentSwapchainDesc.BufferDesc.Height, _interpolationWidth[fIndex], _interpolationHeight[fIndex],
+            _interpolationLeft[fIndex].value_or(0), _interpolationTop[fIndex].value_or(0), calculatedLeft,
+            calculatedTop, Config::Instance()->FGRectLeft.has_value(), Config::Instance()->FGRectLeft.value_or(0),
+            Config::Instance()->FGRectTop.has_value(), Config::Instance()->FGRectTop.value_or(0),
+            Config::Instance()->FGRectWidth.has_value(), Config::Instance()->FGRectWidth.value_or(0),
+            Config::Instance()->FGRectHeight.has_value(), Config::Instance()->FGRectHeight.value_or(0),
+            backbuffer.resourceBase.x, backbuffer.resourceBase.y, backbuffer.resourceSize.x, backbuffer.resourceSize.y);
 
         result = XeFGProxy::D3D12TagFrameResource()(_swapChainContext, (ID3D12CommandList*) 1, frameId, &backbuffer);
 
@@ -1525,11 +1540,39 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
         if (indexDiff < 0)
             indexDiff += BUFFER_COUNT;
 
-        // We will us UI color later with Render UI
-        if (type != FG_ResourceType::UIColor ||
-            (XeFGProxy::SetUiCompositionState() != nullptr || Config::Instance()->FGDrawUIOverFG.value_or_default()))
+        auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
+        const bool submitToXeFG =
+            type != FG_ResourceType::UIColor ||
+            (XeFGProxy::SetUiCompositionState() != nullptr || Config::Instance()->FGDrawUIOverFG.value_or_default());
+
+        if (type == FG_ResourceType::HudlessColor || type == FG_ResourceType::UIColor ||
+            type == FG_ResourceType::Depth || type == FG_ResourceType::Velocity)
         {
-            auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
+            auto* d3dResource = resourceParam.pResource;
+            if (d3dResource != nullptr)
+            {
+                const auto desc = d3dResource->GetDesc();
+                LOG_INFO("[RES-DIAG][XEFG-RESOURCE] frame={} index={} type={} resource={}x{} base={},{} size={}x{} "
+                         "validity={} state={} submitted={}",
+                         frameId, fIndex, magic_enum::enum_name(type), desc.Width, desc.Height,
+                         resourceParam.resourceBase.x, resourceParam.resourceBase.y, resourceParam.resourceSize.x,
+                         resourceParam.resourceSize.y, static_cast<uint32_t>(resourceParam.validity),
+                         static_cast<uint32_t>(resourceParam.incomingState), submitToXeFG);
+            }
+            else
+            {
+                LOG_INFO("[RES-DIAG][XEFG-RESOURCE] frame={} index={} type={} resource=<null> base={},{} size={}x{} "
+                         "validity={} state={} submitted={}",
+                         frameId, fIndex, magic_enum::enum_name(type), resourceParam.resourceBase.x,
+                         resourceParam.resourceBase.y, resourceParam.resourceSize.x, resourceParam.resourceSize.y,
+                         static_cast<uint32_t>(resourceParam.validity),
+                         static_cast<uint32_t>(resourceParam.incomingState), submitToXeFG);
+            }
+        }
+
+        // We will us UI color later with Render UI
+        if (submitToXeFG)
+        {
             auto result =
                 XeFGProxy::D3D12TagFrameResource()(_swapChainContext, fResource->cmdList, frameId, &resourceParam);
             LOG_DEBUG("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,

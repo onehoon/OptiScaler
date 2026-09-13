@@ -4,6 +4,30 @@
 #include <resource_tracking/ResTrack_dx12.h>
 #include <magic_enum.hpp>
 
+namespace
+{
+const char* GetDiagnosticResourceType(sl::BufferType type)
+{
+    switch (type)
+    {
+    case sl::kBufferTypeDepth:
+        return "Depth";
+    case sl::kBufferTypeHiResDepth:
+        return "HiResDepth";
+    case sl::kBufferTypeLinearDepth:
+        return "LinearDepth";
+    case sl::kBufferTypeMotionVectors:
+        return "MotionVectors";
+    case sl::kBufferTypeHUDLessColor:
+        return "HUDLessColor";
+    case sl::kBufferTypeUIColorAndAlpha:
+        return "UIColorAndAlpha";
+    default:
+        return "Unknown";
+    }
+}
+} // namespace
+
 void Sl_Inputs_Dx12::CheckForFrame(IFGFeature_Dx12* fg, uint32_t frameId)
 {
     std::scoped_lock lock(_frameBoundaryMutex);
@@ -353,6 +377,21 @@ bool Sl_Inputs_Dx12::reportResource(const sl::ResourceTag& tag, ID3D12GraphicsCo
         res.frameIndex = -1;
     }
 
+    const bool isDiagnosticResource =
+        tag.type == sl::kBufferTypeDepth || tag.type == sl::kBufferTypeHiResDepth ||
+        tag.type == sl::kBufferTypeLinearDepth || tag.type == sl::kBufferTypeMotionVectors ||
+        tag.type == sl::kBufferTypeHUDLessColor || tag.type == sl::kBufferTypeUIColorAndAlpha;
+
+    if (isDiagnosticResource)
+    {
+        LOG_INFO("[RES-DIAG][SL] frame={} index={} type={} lifecycle={} extent={}x{} base={},{} texture={}x{} "
+                 "resolved={}x{} resolvedBase={},{} validity={} state={}",
+                 frameId, res.frameIndex, GetDiagnosticResourceType(tag.type), magic_enum::enum_name(tag.lifecycle),
+                 tag.extent ? tag.extent.width : 0, tag.extent ? tag.extent.height : 0,
+                 tag.extent ? tag.extent.left : 0, tag.extent ? tag.extent.top : 0, desc.Width, desc.Height, res.width,
+                 res.height, res.left, res.top, magic_enum::enum_name(res.validity), static_cast<uint32_t>(res.state));
+    }
+
     bool handled = true;
 
     // Map types
@@ -406,6 +445,11 @@ bool Sl_Inputs_Dx12::reportResource(const sl::ResourceTag& tag, ID3D12GraphicsCo
         if (Config::Instance()->FGHudlessValidNow.value_or_default())
             res.validity = FG_ResourceValidity::ValidNow;
 
+        LOG_INFO("[RES-DIAG][SL-HUDLESS] frame={} index={} resolved={}x{} texture={}x{} extent={}x{} base={},{} "
+                 "InterpolationRect <- {}x{}",
+                 frameId, res.frameIndex, res.width, res.height, desc.Width, desc.Height,
+                 tag.extent ? tag.extent.width : 0, tag.extent ? tag.extent.height : 0,
+                 tag.extent ? tag.extent.left : 0, tag.extent ? tag.extent.top : 0, res.width, res.height);
         fgOutput->SetInterpolationRect(res.width, res.height);
         fgOutput->SetResource(&res);
     }
@@ -426,8 +470,21 @@ bool Sl_Inputs_Dx12::reportResource(const sl::ResourceTag& tag, ID3D12GraphicsCo
         UINT height = 0;
         fgOutput->GetInterpolationRect(width, height, _currentIndex);
 
-        if (width == 0)
+        const bool fallbackApplied = width == 0;
+
+        if (fallbackApplied)
             fgOutput->SetInterpolationRect(res.width, res.height);
+
+        UINT64 interpolationAfterWidth = 0;
+        UINT interpolationAfterHeight = 0;
+        fgOutput->GetInterpolationRect(interpolationAfterWidth, interpolationAfterHeight, _currentIndex);
+
+        LOG_INFO("[RES-DIAG][SL-UI] frame={} index={} UI={}x{} texture={}x{} extent={}x{} base={},{} "
+                 "interpolationIndex={} currentInterpolation={}x{} fallbackApplied={} interpolationAfter={}x{}",
+                 frameId, res.frameIndex, res.width, res.height, desc.Width, desc.Height,
+                 tag.extent ? tag.extent.width : 0, tag.extent ? tag.extent.height : 0,
+                 tag.extent ? tag.extent.left : 0, tag.extent ? tag.extent.top : 0, _currentIndex, width, height,
+                 fallbackApplied, interpolationAfterWidth, interpolationAfterHeight);
 
         fgOutput->SetResource(&res);
     }
