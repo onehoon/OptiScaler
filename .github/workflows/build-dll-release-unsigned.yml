@@ -1,0 +1,196 @@
+name: Build DLL Release (Unsigned)
+
+on:
+  workflow_dispatch:
+
+env:
+  BUILD_CONFIGURATION: Release
+
+permissions:
+  contents: write
+
+concurrency:
+  group: optiscaler-unsigned-dll-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Report selected revision
+        shell: powershell
+        env:
+          REQUESTED_REF: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $resolvedSha = (git rev-parse HEAD).Trim()
+          $shortSha = (git rev-parse --short HEAD).Trim()
+
+          Write-Host "Selected ref: $env:REQUESTED_REF"
+          Write-Host "Resolved HEAD SHA: $resolvedSha"
+          Write-Host "Resolved short SHA: $shortSha"
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        shell: powershell
+        run: msbuild OptiScaler.sln /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
+
+      - name: Validate and package DLLs
+        id: package
+        shell: powershell
+        env:
+          REQUESTED_REF: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $sourceDll = Join-Path $env:GITHUB_WORKSPACE 'x64\Release\a\OptiScaler.dll'
+          if (-not (Test-Path -LiteralPath $sourceDll -PathType Leaf)) {
+            throw "Expected build output not found: $sourceDll"
+          }
+
+          $artifactRoot = Join-Path $env:RUNNER_TEMP 'optiscaler-unsigned-dll'
+          if (Test-Path -LiteralPath $artifactRoot) {
+            Remove-Item -LiteralPath $artifactRoot -Recurse -Force
+          }
+
+          $stageOpti = Join-Path $artifactRoot 'OptiScaler'
+          $stageDxgi = Join-Path $artifactRoot 'dxgi'
+          New-Item -ItemType Directory -Path $stageOpti, $stageDxgi -Force | Out-Null
+
+          $optiDll = Join-Path $stageOpti 'OptiScaler.dll'
+          $dxgiDll = Join-Path $stageDxgi 'dxgi.dll'
+          Copy-Item -LiteralPath $sourceDll -Destination $optiDll
+          Copy-Item -LiteralPath $sourceDll -Destination $dxgiDll
+
+          $optiHash = (Get-FileHash -LiteralPath $optiDll -Algorithm SHA256).Hash
+          $dxgiHash = (Get-FileHash -LiteralPath $dxgiDll -Algorithm SHA256).Hash
+          if ($optiHash -ne $dxgiHash) {
+            throw 'dxgi.dll is not byte-identical to OptiScaler.dll'
+          }
+          Write-Host "DLL SHA-256: $optiHash"
+
+          $optiZip = Join-Path $artifactRoot 'OptiScaler.zip'
+          $dxgiZip = Join-Path $artifactRoot 'dxgi.zip'
+          Compress-Archive -LiteralPath $optiDll -DestinationPath $optiZip -Force
+          Compress-Archive -LiteralPath $dxgiDll -DestinationPath $dxgiZip -Force
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          function Assert-ZipEntries {
+            param(
+              [Parameter(Mandatory = $true)][string]$ZipPath,
+              [Parameter(Mandatory = $true)][string]$ExpectedEntry
+            )
+
+            $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+            try {
+              $entries = @($archive.Entries | ForEach-Object { $_.FullName })
+              if ($entries.Count -ne 1 -or $entries[0] -ne $ExpectedEntry) {
+                throw "Unexpected ZIP contents in ${ZipPath}: $($entries -join ', ')"
+              }
+            }
+            finally {
+              $archive.Dispose()
+            }
+          }
+
+          Assert-ZipEntries -ZipPath $optiZip -ExpectedEntry 'OptiScaler.dll'
+          Assert-ZipEntries -ZipPath $dxgiZip -ExpectedEntry 'dxgi.dll'
+
+          $resolvedSha = (git rev-parse HEAD).Trim()
+          $shortSha = (git rev-parse --short HEAD).Trim()
+          $buildTimestamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+          $releaseNotes = Join-Path $artifactRoot 'release-notes.md'
+          @"
+          [Try to use custom REF with this custom OptiScaler](https://github.com/onehoon/REFramework/releases/latest)
+
+          ### Only for Capcom games
+
+          Unsigned CI build
+
+          Requested ref: $env:REQUESTED_REF
+          Resolved commit: $resolvedSha
+          Resolved short commit: $shortSha
+          Build configuration: Release x64
+          SHA-256: $optiHash
+          Build date/time: $buildTimestamp
+          "@ | Set-Content -LiteralPath $releaseNotes -Encoding utf8
+
+          "resolved_sha=$resolvedSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "short_sha=$shortSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "dll_sha256=$optiHash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "opti_zip=$optiZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "dxgi_zip=$dxgiZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "release_notes=$releaseNotes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Create or update unsigned-ci release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESOLVED_SHA: ${{ steps.package.outputs.resolved_sha }}
+          RELEASE_NOTES: ${{ steps.package.outputs.release_notes }}
+          OPTI_ZIP: ${{ steps.package.outputs.opti_zip }}
+          DXGI_ZIP: ${{ steps.package.outputs.dxgi_zip }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'unsigned-ci'
+          $title = 'OptiScaler Unsigned CI Build'
+          $repo = $env:GITHUB_REPOSITORY
+
+          $releaseViewOutput = & {
+            $ErrorActionPreference = 'Continue'
+            gh release view $tag --repo $repo --json tagName 2>&1
+          }
+          $releaseViewExitCode = $LASTEXITCODE
+          $releaseViewText = ($releaseViewOutput | Out-String).Trim()
+
+          if ($releaseViewExitCode -eq 0) {
+            $releaseExists = $true
+          }
+          elseif ($releaseViewText -match '(?i)release not found') {
+            $releaseExists = $false
+          }
+          else {
+            throw "Unable to determine whether release '$tag' exists (gh exit code $releaseViewExitCode): $releaseViewText"
+          }
+
+          if (-not $releaseExists) {
+            gh release create $tag `
+              --repo $repo `
+              --target $env:RESOLVED_SHA `
+              --title $title `
+              --notes-file $env:RELEASE_NOTES `
+              --prerelease
+          }
+          else {
+            gh release edit $tag `
+              --repo $repo `
+              --target $env:RESOLVED_SHA `
+              --title $title `
+              --notes-file $env:RELEASE_NOTES `
+              --prerelease
+          }
+
+          $tagRef = "repos/$repo/git/refs/tags/$tag"
+          gh api --method PATCH $tagRef `
+            -f "sha=$env:RESOLVED_SHA" `
+            -F force=true | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to move tag '$tag' to $env:RESOLVED_SHA"
+          }
+
+          $tagSha = (gh api $tagRef --jq '.object.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $tagSha -ne $env:RESOLVED_SHA) {
+            throw "Tag '$tag' does not resolve to the built commit. Expected $env:RESOLVED_SHA, got $tagSha"
+          }
+          Write-Host "Tag '$tag' now resolves to $tagSha"
+
+          gh release upload $tag $env:OPTI_ZIP $env:DXGI_ZIP --repo $repo --clobber
