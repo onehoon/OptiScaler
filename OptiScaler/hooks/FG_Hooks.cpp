@@ -1598,7 +1598,7 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 if (auto* xefg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG); xefg != nullptr)
                 {
                     releaseSucceeded =
-                        xefg->ReleaseSwapchainFromFinalProxyRelease(_hwnd, [This]() { o_FGRelease(This); });
+                        xefg->ReleaseSwapchainFromFinalProxyRelease(_hwnd, This, [This]() { o_FGRelease(This); });
                 }
                 else
                 {
@@ -1618,8 +1618,12 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 return 0;
             }
 
-            LOG_DEBUG("FG Swapchain released, clearing currentFGSwapchain");
-            state.currentFGSwapchain = nullptr;
+            LOG_DEBUG("FG Swapchain released, clearing public proxy aliases");
+            if (state.currentSwapchain == This)
+                state.currentSwapchain = nullptr;
+
+            if (state.currentFGSwapchain == This)
+                state.currentFGSwapchain = nullptr;
 
             skipReleaseChecks = false;
 

@@ -1963,14 +1963,16 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
     return ReleaseSwapchainLocked(hwnd);
 }
 
-bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy)
+bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, IUnknown* finalProxy,
+                                                      std::function<void()> releaseFinalProxy)
 {
-    XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseEnter, 0, reinterpret_cast<uint64_t>(this), 0, 0,
+    XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseEnter, reinterpret_cast<uint64_t>(finalProxy),
+                      reinterpret_cast<uint64_t>(this), 0, 0,
                       _swapchainReleaseInProgress.load(std::memory_order_acquire),
                       _swapchainReleaseOwnerThread.load(std::memory_order_acquire));
     std::unique_lock lifecycleLock(_swapchainLifecycleMutex);
 
-    if (!releaseFinalProxy)
+    if (finalProxy == nullptr || !releaseFinalProxy)
     {
         LOG_ERROR("[XeFG][Lifecycle] action = release_swapchain_aborted, "
                   "reason = missing_final_proxy_release");
@@ -1978,7 +1980,6 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
     }
 
     auto& state = State::Instance();
-    auto* const finalProxy = state.currentFGSwapchain;
     bool finalProxyReleased = false;
     auto releaseFinalProxyOnce = [&]()
     {
@@ -1992,7 +1993,6 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
         if (state.currentFGSwapchain == finalProxy)
             state.currentFGSwapchain = nullptr;
 
-        LOG_DEBUG("[XeFG][Ownership] action = final_proxy_aliases_cleared, ptr = {:X}", (size_t) finalProxy);
         XeFGTrace::Record(XeFGTrace::EventType::XeFGFinalProxyReleaseBefore, reinterpret_cast<uint64_t>(finalProxy),
                           reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext));
         releaseFinalProxy();
@@ -2000,6 +2000,18 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
                           reinterpret_cast<uint64_t>(this), reinterpret_cast<uint64_t>(_swapChainContext));
         finalProxyReleased = true;
     };
+
+    // The lifecycle associated with this proxy may already have been retired
+    // while this final COM release was waiting for the lifecycle mutex. Never
+    // let an old proxy tear down a newer XeFG lifecycle.
+    if (state.currentFGSwapchain != finalProxy)
+    {
+        XeFGTrace::Record(XeFGTrace::EventType::XeFGStaleFinalProxyReleaseOnly, reinterpret_cast<uint64_t>(finalProxy),
+                          reinterpret_cast<uint64_t>(state.currentFGSwapchain),
+                          reinterpret_cast<uint64_t>(_swapChainContext));
+        releaseFinalProxyOnce();
+        return true;
+    }
 
     const bool releaseSucceeded = ReleaseSwapchainLocked(hwnd, releaseFinalProxyOnce);
 

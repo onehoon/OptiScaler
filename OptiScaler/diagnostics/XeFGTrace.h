@@ -119,6 +119,7 @@ enum class EventType : uint32_t
     XeFGDestroyFGContextExit,
     XeFGDestroySwapchainContextEnter,
     XeFGDestroySwapchainContextExit,
+    XeFGStaleFinalProxyReleaseOnly,
 };
 
 enum TraceFlagBits : uint32_t

@@ -57,6 +57,7 @@ EVENT_NAMES = {
     103: "XeFGReleaseLockedAfterDestroySwapchainContext", 104: "XeFGReleaseLockedBeforeReleaseObjects",
     105: "XeFGDestroyFGContextEnter", 106: "XeFGDestroyFGContextExit",
     107: "XeFGDestroySwapchainContextEnter", 108: "XeFGDestroySwapchainContextExit",
+    109: "XeFGStaleFinalProxyReleaseOnly",
 }
 
 FLAG_NAMES = ((1, "skipResize"), (2, "skipResize1"), (4, "skipPresent"), (8, "skipPresent1"),
@@ -146,16 +147,17 @@ def write_output(trace: Trace, output_format: str) -> None:
 
 
 def self_test() -> None:
-    header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, 8, 1, 1000, 100, 8)
-    records = bytearray(RECORD.size * 8)
+    capacity = 9
+    header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, capacity, 1, 1000, 100, capacity)
+    records = bytearray(RECORD.size * capacity)
     for sequence, event, result, aux0, aux1 in ((1, 1, 0, 0, 0), (2, 16, 0, 0, 0),
                                                 (3, 43, -7, 0, 0), (4, 49, -2147467260, 43, 1),
                                                 (5, 67, 0, 2, 0), (6, 82, 0, 4, 0),
-                                                (7, 89, 0, 0, 1), (8, 107, 0, 0, 1)):
-        RECORD.pack_into(records, (sequence % 8) * RECORD.size, sequence, 100 + sequence, 0x10, 0x20, 0x30,
+                                                (7, 89, 0, 0, 1), (8, 107, 0, 0, 1), (9, 109, 0, 0, 0)):
+        RECORD.pack_into(records, (sequence % capacity) * RECORD.size, sequence, 100 + sequence, 0x10, 0x20, 0x30,
                          sequence, 42, event, 2, 99, result, 4, aux0, aux1)
     trace = parse_bytes(header + records)
-    assert [record[0] for record in trace.records] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [record[0] for record in trace.records] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     decoded = list(rows(trace))
     assert decoded[2]["result"] == -7
     assert decoded[3]["failure_source_event"] == "XeFGSetEnabledResult"
@@ -164,6 +166,7 @@ def self_test() -> None:
     assert decoded[5]["event"] == "SetResourceBeforeTagFrameResource"
     assert decoded[6]["event"] == "FSRFGActivateDecision"
     assert decoded[7]["event"] == "XeFGDestroySwapchainContextEnter"
+    assert decoded[8]["event"] == "XeFGStaleFinalProxyReleaseOnly"
     print("self-test: PASS")
 
 
