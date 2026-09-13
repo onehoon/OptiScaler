@@ -303,7 +303,7 @@ ffxReturnCode_t ffxDestroyContext_Dx12(ffxContext* context, const ffxAllocationC
 
     LOG_DEBUG("context: {:X}", (size_t) *context);
 
-    if (*context == (void*) scContext || *context == (void*) fgContext)
+    if (IsOwnedFfxApiDx12FGContext(*context))
     {
         auto result = ffxDestroyContext_Dx12FG(context, memCb);
 
