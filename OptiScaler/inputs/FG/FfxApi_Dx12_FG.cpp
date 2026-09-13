@@ -528,22 +528,29 @@ ffxReturnCode_t ffxConfigure_Dx12FG(ffxContext* context, ffxConfigureDescHeader*
         LOG_DEBUG("FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION frameID: {}, enabled: {}, fIndex: {} ", cDesc->frameID,
                   cDesc->frameGenerationEnabled, fIndex);
 
-        s.fsrfgInputActive = cDesc->frameGenerationEnabled;
+        const bool frameGenEnabled = cDesc->frameGenerationEnabled;
+        const bool globalFgEnabled = Config::Instance()->FGEnabled.value_or_default();
+        const bool isActive = fg->IsActive();
+        bool isPaused = false;
+        if (frameGenEnabled && !isActive && globalFgEnabled)
+            isPaused = fg->IsPaused();
+
+        s.fsrfgInputActive = frameGenEnabled;
 
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg),
                           reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0,
-                          (cDesc->frameGenerationEnabled ? 1u : 0u) |
-                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
                           static_cast<uint32_t>(fIndex));
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg),
                           reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0,
-                          (cDesc->frameGenerationEnabled ? 1u : 0u) |
-                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
                           1);
 
-        if (cDesc->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
+        if (frameGenEnabled && !isActive && globalFgEnabled)
         {
-            if (!fg->IsPaused())
+            if (!isPaused)
             {
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateBefore, 0, reinterpret_cast<uint64_t>(fg),
                                   reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0, 1);
@@ -553,7 +560,7 @@ ffxReturnCode_t ffxConfigure_Dx12FG(ffxContext* context, ffxConfigureDescHeader*
                 fg->ResetCounters();
             }
         }
-        else if (!cDesc->frameGenerationEnabled && fg->IsActive())
+        else if (!frameGenEnabled && isActive)
         {
             fg->Deactivate();
             fg->ResetCounters();

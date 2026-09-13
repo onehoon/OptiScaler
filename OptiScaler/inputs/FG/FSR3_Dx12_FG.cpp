@@ -705,22 +705,29 @@ static Fsr3::FfxErrorCode hkffxFsr3ConfigureFrameGeneration(void* context, Fsr3:
     {
         LOG_DEBUG("frameGenerationEnabled: {} ", config->frameGenerationEnabled);
 
-        s.fsrfgInputActive = config->frameGenerationEnabled;
+        const bool frameGenEnabled = config->frameGenerationEnabled;
+        const bool globalFgEnabled = Config::Instance()->FGEnabled.value_or_default();
+        const bool isActive = fg->IsActive();
+        bool isPaused = false;
+        if (frameGenEnabled && !isActive && globalFgEnabled)
+            isPaused = fg->IsPaused();
+
+        s.fsrfgInputActive = frameGenEnabled;
 
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg),
                           reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
-                          (config->frameGenerationEnabled ? 1u : 0u) |
-                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
                           2);
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg),
                           reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
-                          (config->frameGenerationEnabled ? 1u : 0u) |
-                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
                           2);
 
-        if (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
+        if (frameGenEnabled && !isActive && globalFgEnabled)
         {
-            if (!fg->IsPaused())
+            if (!isPaused)
             {
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateBefore, 0, reinterpret_cast<uint64_t>(fg),
                                   reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0, 2);
@@ -730,7 +737,7 @@ static Fsr3::FfxErrorCode hkffxFsr3ConfigureFrameGeneration(void* context, Fsr3:
                 fg->ResetCounters();
             }
         }
-        else if (!config->frameGenerationEnabled && fg->IsActive())
+        else if (!frameGenEnabled && isActive)
         {
             fg->Deactivate();
             fg->ResetCounters();
@@ -804,22 +811,29 @@ static Fsr3::FfxErrorCode hkffxSetFrameGenerationConfigToSwapchainDX12(Fsr3::Ffx
     {
         LOG_DEBUG("frameGenerationEnabled: {} ", config->frameGenerationEnabled);
 
-        s.fsrfgInputActive = config->frameGenerationEnabled;
+        const bool frameGenEnabled = config->frameGenerationEnabled;
+        const bool globalFgEnabled = Config::Instance()->FGEnabled.value_or_default();
+        const bool isActive = fg->IsActive();
+        bool isPaused = false;
+        if (frameGenEnabled && !isActive && globalFgEnabled)
+            isPaused = fg->IsPaused();
+
+        s.fsrfgInputActive = frameGenEnabled;
 
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0,
                           0,
-                          (config->frameGenerationEnabled ? 1u : 0u) |
-                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
                           2);
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0,
                           0,
-                          (config->frameGenerationEnabled ? 1u : 0u) |
-                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          (frameGenEnabled ? 1u : 0u) | (isActive ? 1u << 1 : 0u) | (isPaused ? 1u << 2 : 0u) |
+                              (globalFgEnabled ? 1u << 3 : 0u),
                           2);
 
-        if (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
+        if (frameGenEnabled && !isActive && globalFgEnabled)
         {
-            if (!fg->IsPaused())
+            if (!isPaused)
             {
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateBefore, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0,
                                   0, 0, 0, 2);
@@ -829,7 +843,7 @@ static Fsr3::FfxErrorCode hkffxSetFrameGenerationConfigToSwapchainDX12(Fsr3::Ffx
                 fg->ResetCounters();
             }
         }
-        else if (!config->frameGenerationEnabled && fg->IsActive())
+        else if (!frameGenEnabled && isActive)
         {
             fg->Deactivate();
             fg->ResetCounters();
