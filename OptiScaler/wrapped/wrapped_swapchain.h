@@ -88,6 +88,7 @@ class DECLSPEC_UUID("3af622a3-82d0-49cd-994f-cce05122c222") WrappedIDXGISwapChai
     bool _uwp = false;
     LONG _refcount;
     UINT _lastFlags = 0;
+    uint64_t _fgGenerationAtCreation = 0;
 
     IUnknown* _device = nullptr;
     IUnknown* _device2 = nullptr;

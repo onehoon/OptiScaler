@@ -192,7 +192,16 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
         }
 
         _hwnd = pDesc->OutputWindow;
-        State::Instance().currentFGSwapchain = *ppSwapChain;
+        auto& state = State::Instance();
+        if (newFGSwapchain != nullptr && newFGSwapchain != previousFGSwapchain)
+        {
+            const auto generation = state.nextFGSwapchainGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+            state.currentFGSwapchainGeneration.store(generation, std::memory_order_release);
+            LOG_INFO("[FG][Lifecycle] action = publish_generation, generation = {}, proxy = {:X}, hwnd = {:X}",
+                     generation, (size_t) newFGSwapchain, (size_t) pDesc->OutputWindow);
+        }
+
+        state.currentFGSwapchain = *ppSwapChain;
 
         HookFGSwapchain(*ppSwapChain);
 
@@ -309,7 +318,16 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
         }
 
         _hwnd = hWnd;
-        State::Instance().currentFGSwapchain = *ppSwapChain;
+        auto& state = State::Instance();
+        if (newFGSwapchain != nullptr && newFGSwapchain != previousFGSwapchain)
+        {
+            const auto generation = state.nextFGSwapchainGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+            state.currentFGSwapchainGeneration.store(generation, std::memory_order_release);
+            LOG_INFO("[FG][Lifecycle] action = publish_generation, generation = {}, proxy = {:X}, hwnd = {:X}",
+                     generation, (size_t) newFGSwapchain, (size_t) hWnd);
+        }
+
+        state.currentFGSwapchain = *ppSwapChain;
 
         HookFGSwapchain(*ppSwapChain);
         State::Instance().currentSwapchain = *ppSwapChain;
@@ -1268,6 +1286,7 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
     This->AddRef();
 
     auto& state = State::Instance();
+    const auto generationBeforeRelease = state.currentFGSwapchainGeneration.load(std::memory_order_acquire);
 
     if (!Config::Instance()->FGPreserveSwapChain.value_or_default())
     {
@@ -1309,6 +1328,12 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
 
             if (state.currentFGSwapchain == This)
                 state.currentFGSwapchain = nullptr;
+
+            if (state.currentFGSwapchain == nullptr &&
+                state.currentFGSwapchainGeneration.load(std::memory_order_acquire) == generationBeforeRelease)
+            {
+                state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
+            }
 
             skipReleaseChecks = false;
 

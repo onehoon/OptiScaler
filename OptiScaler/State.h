@@ -6,6 +6,7 @@
 
 #include <set>
 #include <deque>
+#include <atomic>
 #include <vulkan/vulkan.h>
 #include <ankerl/unordered_dense.h>
 #include <mutex>
@@ -306,6 +307,10 @@ class State
     IDXGISwapChain* currentWrappedSwapchain = nullptr;
     IDXGISwapChain* currentRealSwapchain = nullptr;
     IDXGISwapChain* currentFGSwapchain = nullptr;
+    // Monotonic identity for the currently published FG swapchain lifecycle.
+    // This is tracking metadata only; it does not imply COM ownership.
+    std::atomic_uint64_t nextFGSwapchainGeneration { 0 };
+    std::atomic_uint64_t currentFGSwapchainGeneration { 0 };
     ID3D12Device* currentD3D12Device = nullptr;
     DXGI_ADAPTER_DESC currentD3D12AdepterDesc = {};
     ID3D11Device* currentD3D11Device = nullptr;

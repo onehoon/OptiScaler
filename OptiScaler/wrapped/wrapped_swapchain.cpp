@@ -424,6 +424,7 @@ WrappedIDXGISwapChain4::WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* p
 {
     _id = ++scCount;
     _lastFlags = flags;
+    _fgGenerationAtCreation = State::Instance().currentFGSwapchainGeneration.load(std::memory_order_acquire);
 
     _real->QueryInterface(IID_PPV_ARGS(&_real1));
     if (_real1 != nullptr)
@@ -573,6 +574,9 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
 #endif
 
         auto& state = State::Instance();
+        const bool wasCurrentWrapped = state.currentWrappedSwapchain == this;
+        const auto wrapperGeneration = _fgGenerationAtCreation;
+        const auto currentGeneration = state.currentFGSwapchainGeneration.load(std::memory_order_acquire);
 
         MenuOverlayDx::CleanupRenderTarget(true, _handle);
 
@@ -590,7 +594,11 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
         auto fg = state.currentFG;
         bool releaseCompleted = false;
         auto* fgProxyBeforeRelease = state.currentFGSwapchain;
-        if (fg != nullptr)
+        const bool canReleaseCurrentFgLifecycle = wasCurrentWrapped && wrapperGeneration != 0 &&
+                                                  wrapperGeneration == currentGeneration && fg != nullptr &&
+                                                  state.currentFGSwapchain != nullptr && fg->Hwnd() == _handle;
+
+        if (canReleaseCurrentFgLifecycle)
         {
             if (fg->Mutex.getOwner() == 1)
             {
@@ -602,12 +610,26 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
                 releaseCompleted = fg->ReleaseSwapchain(_handle);
 
                 if (!releaseCompleted)
-                    LOG_ERROR("[XeFG][Lifecycle] action = wrapped_release_aborted, reason = release_not_completed");
+                    LOG_ERROR("[XeFG][Lifecycle] action = wrapped_release_aborted, generation = {}, "
+                              "reason = release_not_completed",
+                              wrapperGeneration);
             }
+        }
+        else if (fg != nullptr && state.currentFGSwapchain != nullptr)
+        {
+            LOG_INFO("[FG][Lifecycle] action = stale_wrapped_release_skipped, wrapper = {:X}, "
+                     "wrapper_generation = {}, current_generation = {}, was_current_wrapped = {}, hwnd = {:X}",
+                     (size_t) this, wrapperGeneration, currentGeneration, wasCurrentWrapped, (size_t) _handle);
         }
 
         if (releaseCompleted && state.currentFGSwapchain == fgProxyBeforeRelease)
             state.currentFGSwapchain = nullptr;
+
+        if (releaseCompleted && state.currentFGSwapchain == nullptr &&
+            state.currentFGSwapchainGeneration.load(std::memory_order_acquire) == wrapperGeneration)
+        {
+            state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
+        }
 
         const auto refCount = real != nullptr ? real->Release() : 0;
 
