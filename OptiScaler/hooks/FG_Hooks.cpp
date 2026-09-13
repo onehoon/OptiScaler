@@ -19,8 +19,6 @@
 
 #include <d3d12.h>
 
-#define XEFG_RESOURCE_REF_LIMIT 1
-
 static ID3D12Fence* resizeFence = nullptr;
 static UINT64 resizeFenceValue = 0;
 static HANDLE resizeFenceEvent = nullptr;
@@ -28,10 +26,6 @@ static IUnknown* oldSwapChain = nullptr;
 static ID3D12CommandQueue* currentCommandQueue = nullptr;
 static bool _forcedHdrForXeFG = false;
 static HANDLE _semaphore = nullptr;
-
-#if (XEFG_RESOURCE_REF_LIMIT == 0)
-inline static std::vector<void*> oldBackBuffers;
-#endif
 
 static void PauseFG(IFGFeature_Dx12* fg)
 {
@@ -660,38 +654,6 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
     if (Config::Instance()->OverlayMenu.value_or_default())
         MenuOverlayDx::CleanupRenderTarget(false, NULL);
 
-    // Release swapchain backbuffers to prevent errors when resizing
-    if (State::Instance().activeFgOutput == FGOutput::XeFG)
-    {
-        for (UINT i = 0; i < 8; i++)
-        {
-            ID3D12Resource* backBuffer = nullptr;
-            auto bbResult = This->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
-
-            if (bbResult == S_OK)
-            {
-                LOG_DEBUG("Backbuffer {}: {:X}", i, (size_t) backBuffer);
-                auto refCount = backBuffer->Release();
-                while (refCount > XEFG_RESOURCE_REF_LIMIT)
-                {
-                    LOG_DEBUG("Releasing backbuffer {}: RefCount {}", i, refCount);
-                    refCount = backBuffer->Release();
-                }
-
-#if (XEFG_RESOURCE_REF_LIMIT == 0)
-                oldBackBuffers.push_back(backBuffer);
-#endif
-            }
-            else
-            {
-                LOG_DEBUG("GetBuffer failed for index {}: {:X}", i, (UINT) bbResult);
-                break;
-            }
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
     // Force HDR10 for XeFG if HDR16 is used
     if (State::Instance().activeFgOutput == FGOutput::XeFG && NewFormat >= DXGI_FORMAT_R16G16B16A16_TYPELESS &&
         NewFormat <= DXGI_FORMAT_R16G16B16A16_SINT && !Config::Instance()->ForceHDR.has_value())
@@ -945,38 +907,6 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
     // Release menu render targets
     if (Config::Instance()->OverlayMenu.value_or_default())
         MenuOverlayDx::CleanupRenderTarget(false, NULL);
-
-    // Release swapchain backbuffers to prevent errors when resizing
-    if (State::Instance().activeFgOutput == FGOutput::XeFG)
-    {
-        for (UINT i = 0; i < 8; i++)
-        {
-            ID3D12Resource* backBuffer = nullptr;
-            auto bbResult = This->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
-
-            if (bbResult == S_OK)
-            {
-                LOG_DEBUG("Backbuffer {}: {:X}", i, (size_t) backBuffer);
-                auto refCount = backBuffer->Release();
-                while (refCount > XEFG_RESOURCE_REF_LIMIT)
-                {
-                    LOG_DEBUG("Releasing backbuffer {}: RefCount {}", i, refCount);
-                    refCount = backBuffer->Release();
-                }
-
-#if (XEFG_RESOURCE_REF_LIMIT == 0)
-                oldBackBuffers.push_back(backBuffer);
-#endif
-            }
-            else
-            {
-                LOG_DEBUG("GetBuffer failed for index {}: {:X}", i, (UINT) bbResult);
-                break;
-            }
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
 
     // Force HDR10 for XeFG if HDR16 is used
     if (State::Instance().activeFgOutput == FGOutput::XeFG && Format >= DXGI_FORMAT_R16G16B16A16_TYPELESS &&
@@ -1303,21 +1233,6 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
         return 0;
     }
 
-#if (XEFG_RESOURCE_REF_LIMIT == 0)
-    // find if this resource in oldBackBuffers, if it is, skip release and return 0
-    if (oldBackBuffers.size() > 0)
-    {
-        for (auto it = oldBackBuffers.begin(); it != oldBackBuffers.end(); ++it)
-        {
-            if (*it == This)
-            {
-                LOG_DEBUG("Release called on old backbuffer, skipping release and returning 0");
-                return 0;
-            }
-        }
-    }
-#endif // (XEFG_RESOURCE_REF_LIMIT == 0)
-
     static bool skipReleaseChecks = false;
 
     if (skipReleaseChecks || State::Instance().currentFGSwapchain != This || State::Instance().isShuttingDown)
@@ -1332,38 +1247,6 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
             LOG_DEBUG("");
 
             WaitForGPUIdle();
-
-            DXGI_SWAP_CHAIN_DESC scDesc {};
-            ((IDXGISwapChain*) This)->GetDesc(&scDesc);
-
-            // Release swapchain backbuffers to prevent errors when releasing FG swapchain
-            {
-                for (UINT i = 0; i < scDesc.BufferCount; i++)
-                {
-                    ID3D12Resource* backBuffer = nullptr;
-                    auto bbResult = ((IDXGISwapChain*) This)->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
-
-                    if (bbResult == S_OK)
-                    {
-                        LOG_DEBUG("Backbuffer {}: {:X}", i, (size_t) backBuffer);
-                        auto refCount = backBuffer->Release();
-                        while (refCount > XEFG_RESOURCE_REF_LIMIT)
-                        {
-                            LOG_DEBUG("Releasing backbuffer {}: RefCount {}", i, refCount);
-                            refCount = backBuffer->Release();
-                        }
-
-#if (XEFG_RESOURCE_REF_LIMIT == 0)
-                        oldBackBuffers.push_back(backBuffer);
-#endif
-                    }
-                    else
-                    {
-                        LOG_DEBUG("GetBuffer failed for index {}: {:X}", i, (UINT) bbResult);
-                        break;
-                    }
-                }
-            }
 
             // To prevent deadlock when FG release the swapchain
             skipReleaseChecks = true;
