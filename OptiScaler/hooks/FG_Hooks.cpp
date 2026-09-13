@@ -14,6 +14,7 @@
 #include <misc/FrameLimit.h>
 #include <menu/menu_overlay_dx.h>
 #include <upscaler_time/UpscalerTime_Dx12.h>
+#include <wrapped/wrapped_swapchain.h>
 
 #include <detours/detours.h>
 
@@ -122,8 +123,13 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
     }
 
     // Create FG swapchain
-    auto fg = State::Instance().currentFG;
-    IUnknown* previousFGSwapchain = State::Instance().currentFGSwapchain;
+    auto& state = State::Instance();
+    auto fg = state.currentFG;
+    auto* wrappedBeforeCreate = state.currentWrappedSwapchain;
+    IUnknown* previousFGSwapchain = state.currentFGSwapchain;
+    const bool reusedExistingLifecycle = previousFGSwapchain != nullptr &&
+                                         Config::Instance()->FGPreserveSwapChain.value_or_default() && fg != nullptr &&
+                                         fg->Hwnd() == pDesc->OutputWindow;
     bool scResult = false;
 
     {
@@ -192,13 +198,23 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
         }
 
         _hwnd = pDesc->OutputWindow;
-        auto& state = State::Instance();
-        if (newFGSwapchain != nullptr && newFGSwapchain != previousFGSwapchain)
+        if (!reusedExistingLifecycle && newFGSwapchain != nullptr)
         {
             const auto generation = state.nextFGSwapchainGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
             state.currentFGSwapchainGeneration.store(generation, std::memory_order_release);
             LOG_INFO("[FG][Lifecycle] action = publish_generation, generation = {}, proxy = {:X}, hwnd = {:X}",
                      generation, (size_t) newFGSwapchain, (size_t) pDesc->OutputWindow);
+
+            if (state.currentWrappedSwapchain != nullptr && state.currentWrappedSwapchain != wrappedBeforeCreate)
+            {
+                WrappedIDXGISwapChain4* wrapped = nullptr;
+                if (SUCCEEDED(state.currentWrappedSwapchain->QueryInterface(__uuidof(WrappedIDXGISwapChain4),
+                                                                            reinterpret_cast<void**>(&wrapped))))
+                {
+                    wrapped->BindFGGeneration(generation);
+                    wrapped->Release();
+                }
+            }
         }
 
         state.currentFGSwapchain = *ppSwapChain;
@@ -248,8 +264,13 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
     }
 
     // Create FG swapchain
-    auto fg = State::Instance().currentFG;
-    IUnknown* previousFGSwapchain = State::Instance().currentFGSwapchain;
+    auto& state = State::Instance();
+    auto fg = state.currentFG;
+    auto* wrappedBeforeCreate = state.currentWrappedSwapchain;
+    IUnknown* previousFGSwapchain = state.currentFGSwapchain;
+    const bool reusedExistingLifecycle = previousFGSwapchain != nullptr &&
+                                         Config::Instance()->FGPreserveSwapChain.value_or_default() && fg != nullptr &&
+                                         fg->Hwnd() == hWnd;
     bool scResult = false;
     {
         ScopedSkipDxgiLoadChecks skipDxgiLoadChecks {};
@@ -318,13 +339,23 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
         }
 
         _hwnd = hWnd;
-        auto& state = State::Instance();
-        if (newFGSwapchain != nullptr && newFGSwapchain != previousFGSwapchain)
+        if (!reusedExistingLifecycle && newFGSwapchain != nullptr)
         {
             const auto generation = state.nextFGSwapchainGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
             state.currentFGSwapchainGeneration.store(generation, std::memory_order_release);
             LOG_INFO("[FG][Lifecycle] action = publish_generation, generation = {}, proxy = {:X}, hwnd = {:X}",
                      generation, (size_t) newFGSwapchain, (size_t) hWnd);
+
+            if (state.currentWrappedSwapchain != nullptr && state.currentWrappedSwapchain != wrappedBeforeCreate)
+            {
+                WrappedIDXGISwapChain4* wrapped = nullptr;
+                if (SUCCEEDED(state.currentWrappedSwapchain->QueryInterface(__uuidof(WrappedIDXGISwapChain4),
+                                                                            reinterpret_cast<void**>(&wrapped))))
+                {
+                    wrapped->BindFGGeneration(generation);
+                    wrapped->Release();
+                }
+            }
         }
 
         state.currentFGSwapchain = *ppSwapChain;

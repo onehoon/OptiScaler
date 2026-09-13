@@ -424,7 +424,6 @@ WrappedIDXGISwapChain4::WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* p
 {
     _id = ++scCount;
     _lastFlags = flags;
-    _fgGenerationAtCreation = State::Instance().currentFGSwapchainGeneration.load(std::memory_order_acquire);
 
     _real->QueryInterface(IID_PPV_ARGS(&_real1));
     if (_real1 != nullptr)

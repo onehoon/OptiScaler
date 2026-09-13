@@ -15,6 +15,8 @@ class DECLSPEC_UUID("3af622a3-82d0-49cd-994f-cce05122c222") WrappedIDXGISwapChai
     WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* pDevice, HWND hWnd, UINT flags, bool isUWP);
     virtual ~WrappedIDXGISwapChain4();
 
+    void BindFGGeneration(uint64_t generation) noexcept { _fgGenerationAtCreation = generation; }
+
     // implement IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override;
     ULONG STDMETHODCALLTYPE AddRef() override;

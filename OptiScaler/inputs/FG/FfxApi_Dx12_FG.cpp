@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 #include <wrl/client.h>
 
@@ -105,6 +106,16 @@ struct FfxFakeContextToken
     FfxFakeContextKind kind;
     uint64_t serial;
     uint64_t fgSwapchainGeneration;
+    bool destroyInProgress;
+};
+
+struct FfxFakeContextSnapshot
+{
+    FfxFakeContextToken* token;
+    FfxFakeContextKind kind;
+    uint64_t serial;
+    uint64_t generation;
+    bool active;
 };
 
 static std::mutex _fakeContextMutex;
@@ -119,6 +130,7 @@ static FfxFakeContextToken* CreateFakeContextToken(FfxFakeContextKind kind)
         kind,
         _nextFakeContextSerial.fetch_add(1, std::memory_order_relaxed) + 1,
         State::Instance().currentFGSwapchainGeneration.load(std::memory_order_acquire),
+        false,
     };
 
     std::scoped_lock lock(_fakeContextMutex);
@@ -132,20 +144,39 @@ static FfxFakeContextToken* CreateFakeContextToken(FfxFakeContextKind kind)
     return token;
 }
 
-static FfxFakeContextToken* FindOwnedFakeContext(ffxContext value)
+static bool IsOwnedFakeContext(ffxContext value)
 {
     auto* candidate = reinterpret_cast<FfxFakeContextToken*>(value);
 
     std::scoped_lock lock(_fakeContextMutex);
-    return _ownedFakeContexts.contains(candidate) ? candidate : nullptr;
+    return _ownedFakeContexts.contains(candidate);
 }
 
-static bool IsActiveFakeContextToken(FfxFakeContextToken* token)
+static std::optional<FfxFakeContextSnapshot> ClaimFakeContextForDestroy(ffxContext value)
+{
+    auto* token = reinterpret_cast<FfxFakeContextToken*>(value);
+
+    std::scoped_lock lock(_fakeContextMutex);
+    if (!_ownedFakeContexts.contains(token) || token->destroyInProgress)
+        return std::nullopt;
+
+    token->destroyInProgress = true;
+    const auto kind = token->kind;
+    return FfxFakeContextSnapshot {
+        token,
+        kind,
+        token->serial,
+        token->fgSwapchainGeneration,
+        (kind == FfxFakeContextKind::FrameGeneration && _activeFgContextToken == token) ||
+            (kind == FfxFakeContextKind::Swapchain && _activeSwapchainContextToken == token),
+    };
+}
+
+static void ClearFakeContextDestroyClaim(FfxFakeContextToken* token)
 {
     std::scoped_lock lock(_fakeContextMutex);
-    return token != nullptr &&
-           ((token->kind == FfxFakeContextKind::FrameGeneration && _activeFgContextToken == token) ||
-            (token->kind == FfxFakeContextKind::Swapchain && _activeSwapchainContextToken == token));
+    if (_ownedFakeContexts.contains(token))
+        token->destroyInProgress = false;
 }
 
 static void RetireFakeContextToken(FfxFakeContextToken* token)
@@ -185,7 +216,7 @@ static void DetachTrackedWrappedSwapchainForReplacement(HWND hwnd, const char* r
     state.currentWrappedSwapchain = nullptr;
 }
 
-bool IsOwnedFfxApiDx12FGContext(ffxContext context) { return FindOwnedFakeContext(context) != nullptr; }
+bool IsOwnedFfxApiDx12FGContext(ffxContext context) { return IsOwnedFakeContext(context); }
 
 void CheckForFrame(IFGFeature_Dx12* fg, uint64_t frameId)
 {
@@ -505,19 +536,31 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
     if (context == nullptr || *context == nullptr)
         return FFX_API_RETURN_ERROR_PARAMETER;
 
-    auto* token = FindOwnedFakeContext(*context);
-    if (token == nullptr)
-        return PASSTHRU_RETURN_CODE;
-
-    const auto kind = token->kind;
-    const auto serial = token->serial;
-    const auto generation = token->fgSwapchainGeneration;
-
-    if (!IsActiveFakeContextToken(token))
+    auto claim = ClaimFakeContextForDestroy(*context);
+    if (!claim.has_value())
     {
-        LOG_INFO("[FFX][Lifecycle] action = stale_{}_context_destroy_ignored, serial = {}, generation = {}",
-                 kind == FfxFakeContextKind::Swapchain ? "swapchain" : "fg", serial, generation);
-        RetireFakeContextToken(token);
+        if (IsOwnedFakeContext(*context))
+        {
+            LOG_WARN("[FFX][Lifecycle] action = destroy_deferred, reason = destroy_already_in_progress");
+            return FFX_API_RETURN_ERROR_PARAMETER;
+        }
+
+        return PASSTHRU_RETURN_CODE;
+    }
+
+    const auto kind = claim->kind;
+    const auto serial = claim->serial;
+    const auto generation = claim->generation;
+    const auto currentGeneration = State::Instance().currentFGSwapchainGeneration.load(std::memory_order_acquire);
+    const bool tokenMatchesCurrentLifecycle =
+        kind == FfxFakeContextKind::Swapchain && generation != 0 && generation == currentGeneration;
+
+    if (!claim->active || (kind == FfxFakeContextKind::Swapchain && !tokenMatchesCurrentLifecycle))
+    {
+        LOG_INFO("[FFX][Lifecycle] action = stale_{}_context_destroy_ignored, serial = {}, token_generation = {}, "
+                 "current_generation = {}",
+                 kind == FfxFakeContextKind::Swapchain ? "swapchain" : "fg", serial, generation, currentGeneration);
+        RetireFakeContextToken(claim->token);
         *context = nullptr;
         return FFX_API_RETURN_OK;
     }
@@ -534,6 +577,7 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
 
             if (!state.currentFG->ReleaseSwapchain(hwnd))
             {
+                ClearFakeContextDestroyClaim(claim->token);
                 LOG_ERROR("[XeFG][Lifecycle] action = ffx_destroy_context_aborted, reason = release_not_completed");
                 return FFX_API_RETURN_ERROR_PARAMETER;
             }
@@ -551,7 +595,7 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
             LOG_DEBUG("Preserving FGSwapChain!");
         }
 
-        RetireFakeContextToken(token);
+        RetireFakeContextToken(claim->token);
         *context = nullptr;
         return FFX_API_RETURN_OK;
     }
@@ -563,7 +607,7 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
             State::Instance().currentFG->DestroyFGContext();
         }
 
-        RetireFakeContextToken(token);
+        RetireFakeContextToken(claim->token);
         *context = nullptr;
         return FFX_API_RETURN_OK;
     }
