@@ -110,6 +110,26 @@ bool IFeature::SetInitParameters(NVSDK_NGX_Parameter* InParameters)
         InParameters->Get(NVSDK_NGX_Parameter_Height, &height);
         InParameters->Get(NVSDK_NGX_Parameter_PerfQualityValue, &pqValue);
 
+        LOG_INFO("[RES-DIAG][NGX] Width={} Height={} OutWidth={} OutHeight={} Quality={}", width, height, outWidth,
+                 outHeight, pqValue);
+
+        unsigned int subrectWidth = 0;
+        unsigned int subrectHeight = 0;
+        const auto subrectWidthResult =
+            InParameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &subrectWidth);
+        const auto subrectHeightResult =
+            InParameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &subrectHeight);
+
+        if (subrectWidthResult == NVSDK_NGX_Result_Success && subrectHeightResult == NVSDK_NGX_Result_Success)
+        {
+            LOG_INFO("[RES-DIAG][NGX] RenderSubrect={}x{}", subrectWidth, subrectHeight);
+        }
+        else
+        {
+            LOG_INFO("[RES-DIAG][NGX] RenderSubrect unavailable widthResult={} heightResult={}",
+                     static_cast<int>(subrectWidthResult), static_cast<int>(subrectHeightResult));
+        }
+
         GetDynamicOutputResolution(InParameters, &outWidth, &outHeight);
 
         // Thanks to Crytek added these checks
