@@ -303,12 +303,18 @@ ffxReturnCode_t ffxDestroyContext_Dx12(ffxContext* context, const ffxAllocationC
 
     LOG_DEBUG("context: {:X}", (size_t) *context);
 
-    if (*context == (void*) scContext || *context == (void*) fgContext)
+    if (IsOwnedFfxApiDx12FGContext(*context))
     {
         auto result = ffxDestroyContext_Dx12FG(context, memCb);
 
         if (result == PASSTHRU_RETURN_CODE)
-            return FfxApiProxy::D3D12_DestroyContext(context, memCb);
+        {
+            // The handle was owned when routing began but was retired before
+            // the inner destroy claim. Never pass a fake/stale token to FFX.
+            LOG_WARN("[FFX][Lifecycle] action = owned_context_retired_during_destroy");
+            *context = nullptr;
+            return FFX_API_RETURN_OK;
+        }
 
         return result;
     }

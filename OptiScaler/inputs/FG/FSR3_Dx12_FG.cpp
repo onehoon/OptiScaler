@@ -22,7 +22,38 @@
 #include "fsr3/dx12/ffx_dx12.h"
 #include "fsr3/ffx_frameinterpolation.h"
 
-const UINT fgContext = 0x1337;
+#include <atomic>
+#include <wrl/client.h>
+
+static std::atomic_uint32_t _nextLegacyFgContextToken { 0x1337 };
+static std::atomic_uint32_t _activeLegacyFgContextToken { 0 };
+
+static uint32_t CreateLegacyFgContextToken()
+{
+    auto token = _nextLegacyFgContextToken.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (token == 0)
+        token = _nextLegacyFgContextToken.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    _activeLegacyFgContextToken.store(token, std::memory_order_release);
+    return token;
+}
+
+static void DetachTrackedWrappedSwapchainForReplacement(HWND hwnd, const char* reason)
+{
+    auto& state = State::Instance();
+    auto* tracked = state.currentWrappedSwapchain;
+
+    if (tracked == nullptr || state.currentSwapchainDesc.OutputWindow != hwnd)
+        return;
+
+    LOG_INFO("[FG][Ownership] action = detach_wrapped_alias, wrapper = {:X}, hwnd = {:X}, reason = {}",
+             (size_t) tracked, (size_t) hwnd, reason);
+
+    if (state.currentSwapchain == tracked)
+        state.currentSwapchain = nullptr;
+
+    state.currentWrappedSwapchain = nullptr;
+}
 
 // Swapchain create
 typedef FFX_API
@@ -377,18 +408,7 @@ static Fsr3::FfxErrorCode hkffxCreateFrameinterpolationSwapchainDX12(DXGI_SWAP_C
                                                                      IDXGIFactory* dxgiFactory,
                                                                      Fsr3::FfxSwapchain& outGameSwapChain)
 {
-    if (State::Instance().currentWrappedSwapchain != nullptr &&
-        State::Instance().currentSwapchainDesc.OutputWindow == desc->OutputWindow)
-    {
-        auto refCount = State::Instance().currentWrappedSwapchain->Release();
-
-        while (refCount > 0 && refCount < 0xffffff00)
-        {
-            refCount = State::Instance().currentWrappedSwapchain->Release();
-        }
-
-        State::Instance().currentWrappedSwapchain = nullptr;
-    }
+    DetachTrackedWrappedSwapchainForReplacement(desc->OutputWindow, "fsr3_swapchain");
 
     auto result = dxgiFactory->CreateSwapChain(queue, desc, (IDXGISwapChain**) &outGameSwapChain);
 
@@ -399,25 +419,12 @@ static Fsr3::FfxErrorCode hkffxCreateFrameinterpolationSwapchainForHwndDX12(
     HWND hWnd, DXGI_SWAP_CHAIN_DESC1* desc1, DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreenDesc, ID3D12CommandQueue* queue,
     IDXGIFactory* dxgiFactory, Fsr3::FfxSwapchain& outGameSwapChain)
 {
-    IDXGIFactory2* df = nullptr;
+    Microsoft::WRL::ComPtr<IDXGIFactory2> df;
     HRESULT result = E_ABORT;
 
-    if (dxgiFactory->QueryInterface(IID_PPV_ARGS(&df)) == S_OK)
+    if (SUCCEEDED(dxgiFactory->QueryInterface(IID_PPV_ARGS(&df))))
     {
-        df->Release();
-
-        if (State::Instance().currentWrappedSwapchain != nullptr &&
-            State::Instance().currentSwapchainDesc.OutputWindow == hWnd)
-        {
-            auto refCount = State::Instance().currentWrappedSwapchain->Release();
-
-            while (refCount > 0 && refCount < 0xffffff00)
-            {
-                refCount = State::Instance().currentWrappedSwapchain->Release();
-            }
-
-            State::Instance().currentWrappedSwapchain = nullptr;
-        }
+        DetachTrackedWrappedSwapchainForReplacement(hWnd, "fsr3_for_hwnd_swapchain");
 
         result = df->CreateSwapChainForHwnd(queue, hWnd, desc1, fullscreenDesc, nullptr,
                                             (IDXGISwapChain1**) &outGameSwapChain);
@@ -580,7 +587,7 @@ hkffxFrameInterpolationContextCreate(FfxFrameInterpolationContext* context,
     State::Instance().currentFG->CreateContext(_device, _fgConst);
 
     *context = {};
-    context->data[0] = fgContext;
+    context->data[0] = CreateLegacyFgContextToken();
 
     return Fsr3::FFX_OK;
 }
@@ -676,11 +683,29 @@ static Fsr3::FfxErrorCode hkffxFrameInterpolationContextDestroy(FfxFrameInterpol
 
     LOG_DEBUG("");
 
-    if (State::Instance().currentFG != nullptr && fgContext == context->data[0])
+    const auto token = context->data[0];
+    const auto activeToken = _activeLegacyFgContextToken.load(std::memory_order_acquire);
+
+    if (token == 0)
+        return Fsr3::FFX_OK;
+
+    if (token != activeToken)
+    {
+        LOG_INFO("[FSR3][Lifecycle] action = stale_fg_context_destroy_ignored, token = {}, active = {}", token,
+                 activeToken);
+        context->data[0] = 0;
+        return Fsr3::FFX_OK;
+    }
+
+    if (State::Instance().currentFG != nullptr)
     {
         LOG_INFO("Destroying FG Context: {:X}", (size_t) State::Instance().currentFG);
         State::Instance().currentFG->DestroyFGContext();
     }
+
+    uint32_t expected = token;
+    _activeLegacyFgContextToken.compare_exchange_strong(expected, 0, std::memory_order_acq_rel);
+    context->data[0] = 0;
 
     return Fsr3::FFX_OK;
 }

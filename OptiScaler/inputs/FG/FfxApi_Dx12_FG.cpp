@@ -7,6 +7,12 @@
 
 #include <magic_enum.hpp>
 
+#include <atomic>
+#include <mutex>
+#include <optional>
+#include <unordered_set>
+#include <wrl/client.h>
+
 #include "ffx_framegeneration.h"
 #include "dx12/ffx_api_dx12.h"
 
@@ -88,6 +94,129 @@ static int _currentIndex = -1;
 static uint64_t _lastFrameId = UINT32_MAX;
 static uint64_t _frameIdIndex[BUFFER_COUNT] = { UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX };
 static bool _fgCallbackCalled = false;
+
+enum class FfxFakeContextKind : uint8_t
+{
+    FrameGeneration,
+    Swapchain,
+};
+
+struct FfxFakeContextToken
+{
+    FfxFakeContextKind kind;
+    uint64_t serial;
+    uint64_t fgSwapchainGeneration;
+    bool destroyInProgress;
+};
+
+struct FfxFakeContextSnapshot
+{
+    FfxFakeContextToken* token;
+    FfxFakeContextKind kind;
+    uint64_t serial;
+    uint64_t generation;
+    bool active;
+};
+
+static std::mutex _fakeContextMutex;
+static std::unordered_set<FfxFakeContextToken*> _ownedFakeContexts;
+static std::atomic_uint64_t _nextFakeContextSerial { 0 };
+static FfxFakeContextToken* _activeFgContextToken = nullptr;
+static FfxFakeContextToken* _activeSwapchainContextToken = nullptr;
+
+static FfxFakeContextToken* CreateFakeContextToken(FfxFakeContextKind kind)
+{
+    auto* token = new FfxFakeContextToken {
+        kind,
+        _nextFakeContextSerial.fetch_add(1, std::memory_order_relaxed) + 1,
+        State::Instance().currentFGSwapchainGeneration.load(std::memory_order_acquire),
+        false,
+    };
+
+    std::scoped_lock lock(_fakeContextMutex);
+    _ownedFakeContexts.insert(token);
+
+    if (kind == FfxFakeContextKind::FrameGeneration)
+        _activeFgContextToken = token;
+    else
+        _activeSwapchainContextToken = token;
+
+    return token;
+}
+
+static bool IsOwnedFakeContext(ffxContext value)
+{
+    auto* candidate = reinterpret_cast<FfxFakeContextToken*>(value);
+
+    std::scoped_lock lock(_fakeContextMutex);
+    return _ownedFakeContexts.contains(candidate);
+}
+
+static std::optional<FfxFakeContextSnapshot> ClaimFakeContextForDestroy(ffxContext value)
+{
+    auto* token = reinterpret_cast<FfxFakeContextToken*>(value);
+
+    std::scoped_lock lock(_fakeContextMutex);
+    if (!_ownedFakeContexts.contains(token) || token->destroyInProgress)
+        return std::nullopt;
+
+    token->destroyInProgress = true;
+    const auto kind = token->kind;
+    return FfxFakeContextSnapshot {
+        token,
+        kind,
+        token->serial,
+        token->fgSwapchainGeneration,
+        (kind == FfxFakeContextKind::FrameGeneration && _activeFgContextToken == token) ||
+            (kind == FfxFakeContextKind::Swapchain && _activeSwapchainContextToken == token),
+    };
+}
+
+static void ClearFakeContextDestroyClaim(FfxFakeContextToken* token)
+{
+    std::scoped_lock lock(_fakeContextMutex);
+    if (_ownedFakeContexts.contains(token))
+        token->destroyInProgress = false;
+}
+
+static void RetireFakeContextToken(FfxFakeContextToken* token)
+{
+    if (token == nullptr)
+        return;
+
+    bool retired = false;
+    {
+        std::scoped_lock lock(_fakeContextMutex);
+        retired = _ownedFakeContexts.erase(token) != 0;
+
+        if (_activeFgContextToken == token)
+            _activeFgContextToken = nullptr;
+        if (_activeSwapchainContextToken == token)
+            _activeSwapchainContextToken = nullptr;
+    }
+
+    if (retired)
+        delete token;
+}
+
+static void DetachTrackedWrappedSwapchainForReplacement(HWND hwnd, const char* reason)
+{
+    auto& state = State::Instance();
+    auto* tracked = state.currentWrappedSwapchain;
+
+    if (tracked == nullptr || state.currentSwapchainDesc.OutputWindow != hwnd)
+        return;
+
+    LOG_INFO("[FG][Ownership] action = detach_wrapped_alias, wrapper = {:X}, hwnd = {:X}, reason = {}",
+             (size_t) tracked, (size_t) hwnd, reason);
+
+    if (state.currentSwapchain == tracked)
+        state.currentSwapchain = nullptr;
+
+    state.currentWrappedSwapchain = nullptr;
+}
+
+bool IsOwnedFfxApiDx12FGContext(ffxContext context) { return IsOwnedFakeContext(context); }
 
 void CheckForFrame(IFGFeature_Dx12* fg, uint64_t frameId)
 {
@@ -304,7 +433,7 @@ ffxReturnCode_t ffxCreateContext_Dx12FG(ffxContext* context, ffxCreateContextDes
 
             s.currentFG->CreateContext(_device, _fgConst);
 
-            *context = (ffxContext) fgContext;
+            *context = reinterpret_cast<ffxContext>(CreateFakeContextToken(FfxFakeContextKind::FrameGeneration));
             return FFX_API_RETURN_OK;
         }
     }
@@ -314,7 +443,7 @@ ffxReturnCode_t ffxCreateContext_Dx12FG(ffxContext* context, ffxCreateContextDes
 
         if (s.currentFG != nullptr && s.currentFGSwapchain != nullptr)
         {
-            *context = (ffxContext) scContext; // s.currentFG->SwapchainContext();
+            *context = reinterpret_cast<ffxContext>(CreateFakeContextToken(FfxFakeContextKind::Swapchain));
             *cDesc->swapchain = (IDXGISwapChain4*) s.currentFGSwapchain;
             return FFX_API_RETURN_OK;
         }
@@ -328,18 +457,7 @@ ffxReturnCode_t ffxCreateContext_Dx12FG(ffxContext* context, ffxCreateContextDes
     {
         auto cDesc = (ffxCreateContextDescFrameGenerationSwapChainNewDX12*) desc;
 
-        if (State::Instance().currentWrappedSwapchain != nullptr &&
-            State::Instance().currentSwapchainDesc.OutputWindow == cDesc->desc->OutputWindow)
-        {
-            auto refCount = State::Instance().currentWrappedSwapchain->Release();
-
-            while (refCount > 0 && refCount < 0xffffff00)
-            {
-                refCount = State::Instance().currentWrappedSwapchain->Release();
-            }
-
-            State::Instance().currentWrappedSwapchain = nullptr;
-        }
+        DetachTrackedWrappedSwapchainForReplacement(cDesc->desc->OutputWindow, "ffx_new_swapchain");
 
         auto result =
             cDesc->dxgiFactory->CreateSwapChain(cDesc->gameQueue, cDesc->desc, (IDXGISwapChain**) cDesc->swapchain);
@@ -350,7 +468,7 @@ ffxReturnCode_t ffxCreateContext_Dx12FG(ffxContext* context, ffxCreateContextDes
 
             if (s.currentFG != nullptr && s.currentFGSwapchain != nullptr)
             {
-                *context = (ffxContext) scContext;
+                *context = reinterpret_cast<ffxContext>(CreateFakeContextToken(FfxFakeContextKind::Swapchain));
                 return FFX_API_RETURN_OK;
             }
             else
@@ -370,26 +488,13 @@ ffxReturnCode_t ffxCreateContext_Dx12FG(ffxContext* context, ffxCreateContextDes
     {
         auto cDesc = (ffxCreateContextDescFrameGenerationSwapChainForHwndDX12*) desc;
 
-        IDXGIFactory2* factory = nullptr;
+        Microsoft::WRL::ComPtr<IDXGIFactory2> factory;
         auto scResult = cDesc->dxgiFactory->QueryInterface(IID_PPV_ARGS(&factory));
 
-        if (factory == nullptr)
+        if (FAILED(scResult) || factory == nullptr)
             return FFX_API_RETURN_ERROR_PARAMETER;
 
-        factory->Release();
-
-        if (State::Instance().currentWrappedSwapchain != nullptr &&
-            State::Instance().currentSwapchainDesc.OutputWindow == cDesc->hwnd)
-        {
-            auto refCount = State::Instance().currentWrappedSwapchain->Release();
-
-            while (refCount > 0 && refCount < 0xffffff00)
-            {
-                refCount = State::Instance().currentWrappedSwapchain->Release();
-            }
-
-            State::Instance().currentWrappedSwapchain = nullptr;
-        }
+        DetachTrackedWrappedSwapchainForReplacement(cDesc->hwnd, "ffx_for_hwnd_swapchain");
 
         auto result = factory->CreateSwapChainForHwnd(cDesc->gameQueue, cDesc->hwnd, cDesc->desc, cDesc->fullscreenDesc,
                                                       nullptr, (IDXGISwapChain1**) cDesc->swapchain);
@@ -400,7 +505,7 @@ ffxReturnCode_t ffxCreateContext_Dx12FG(ffxContext* context, ffxCreateContextDes
 
             if (s.currentFG != nullptr && s.currentFGSwapchain != nullptr)
             {
-                *context = (ffxContext) scContext;
+                *context = reinterpret_cast<ffxContext>(CreateFakeContextToken(FfxFakeContextKind::Swapchain));
                 return FFX_API_RETURN_OK;
             }
             else
@@ -428,29 +533,61 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
 
     LOG_DEBUG("");
 
-    if (State::Instance().currentFG != nullptr && (void*) scContext == *context)
-    {
-        if (!Config::Instance()->FGPreserveSwapChain.value_or_default())
-        {
-            LOG_INFO("Destroying Swapchain Context: {:X}", (size_t) State::Instance().currentFG);
+    if (context == nullptr || *context == nullptr)
+        return FFX_API_RETURN_ERROR_PARAMETER;
 
-            if (!State::Instance().currentFG->ReleaseSwapchain(State::Instance().currentFG->Hwnd()))
+    auto claim = ClaimFakeContextForDestroy(*context);
+    if (!claim.has_value())
+    {
+        if (IsOwnedFakeContext(*context))
+        {
+            LOG_WARN("[FFX][Lifecycle] action = destroy_deferred, reason = destroy_already_in_progress");
+            return FFX_API_RETURN_ERROR_PARAMETER;
+        }
+
+        return PASSTHRU_RETURN_CODE;
+    }
+
+    const auto kind = claim->kind;
+    const auto serial = claim->serial;
+    const auto generation = claim->generation;
+    const auto currentGeneration = State::Instance().currentFGSwapchainGeneration.load(std::memory_order_acquire);
+    const bool tokenMatchesCurrentLifecycle =
+        kind == FfxFakeContextKind::Swapchain && generation != 0 && generation == currentGeneration;
+
+    if (!claim->active || (kind == FfxFakeContextKind::Swapchain && !tokenMatchesCurrentLifecycle))
+    {
+        LOG_INFO("[FFX][Lifecycle] action = stale_{}_context_destroy_ignored, serial = {}, token_generation = {}, "
+                 "current_generation = {}",
+                 kind == FfxFakeContextKind::Swapchain ? "swapchain" : "fg", serial, generation, currentGeneration);
+        RetireFakeContextToken(claim->token);
+        *context = nullptr;
+        return FFX_API_RETURN_OK;
+    }
+
+    if (kind == FfxFakeContextKind::Swapchain)
+    {
+        auto& state = State::Instance();
+        if (state.currentFG != nullptr && !Config::Instance()->FGPreserveSwapChain.value_or_default())
+        {
+            LOG_INFO("Destroying Swapchain Context: {:X}", (size_t) state.currentFG);
+
+            const auto hwnd = state.currentFG->Hwnd();
+            const auto generationBeforeRelease = state.currentFGSwapchainGeneration.load(std::memory_order_acquire);
+
+            if (!state.currentFG->ReleaseSwapchain(hwnd))
             {
+                ClearFakeContextDestroyClaim(claim->token);
                 LOG_ERROR("[XeFG][Lifecycle] action = ffx_destroy_context_aborted, reason = release_not_completed");
                 return FFX_API_RETURN_ERROR_PARAMETER;
             }
 
-            if (State::Instance().currentWrappedSwapchain != nullptr &&
-                State::Instance().currentSwapchainDesc.OutputWindow == State::Instance().currentFG->Hwnd())
+            DetachTrackedWrappedSwapchainForReplacement(hwnd, "ffx_destroy_swapchain");
+
+            if (state.currentFGSwapchain == nullptr &&
+                state.currentFGSwapchainGeneration.load(std::memory_order_acquire) == generationBeforeRelease)
             {
-                auto refCount = State::Instance().currentWrappedSwapchain->Release();
-
-                while (refCount > 0 && refCount < 0xffffff00)
-                {
-                    refCount = State::Instance().currentWrappedSwapchain->Release();
-                }
-
-                State::Instance().currentWrappedSwapchain = nullptr;
+                state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
             }
         }
         else
@@ -458,12 +595,20 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
             LOG_DEBUG("Preserving FGSwapChain!");
         }
 
+        RetireFakeContextToken(claim->token);
+        *context = nullptr;
         return FFX_API_RETURN_OK;
     }
-    else if (State::Instance().currentFG != nullptr && (void*) fgContext == *context)
+    else if (kind == FfxFakeContextKind::FrameGeneration)
     {
-        LOG_INFO("Destroying FG Context: {:X}", (size_t) State::Instance().currentFG);
-        State::Instance().currentFG->DestroyFGContext();
+        if (State::Instance().currentFG != nullptr)
+        {
+            LOG_INFO("Destroying FG Context: {:X}", (size_t) State::Instance().currentFG);
+            State::Instance().currentFG->DestroyFGContext();
+        }
+
+        RetireFakeContextToken(claim->token);
+        *context = nullptr;
         return FFX_API_RETURN_OK;
     }
 
