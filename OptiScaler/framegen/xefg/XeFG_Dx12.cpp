@@ -772,7 +772,7 @@ void XeFG_Dx12::Activate()
 {
     XeFGTrace::Record(XeFGTrace::EventType::XeFGActivateEnter, reinterpret_cast<uint64_t>(_swapChain),
                       reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, 0,
-                      0, (_isActive ? 1u : 0u) | (IsLowResMV() ? 1u << 1 : 0u));
+                      0, IsLowResMV() ? 1u << 1 : 0u);
     LOG_DEBUG("");
 
     auto currentFeature = State::Instance().currentFeature;
@@ -784,7 +784,7 @@ void XeFG_Dx12::Activate()
                       reinterpret_cast<uint64_t>(_swapChainContext), reinterpret_cast<uint64_t>(_fgContext), 0, 0, 0, 0,
                       0,
                       (_swapChainContext != nullptr ? 1u : 0u) | (_fgContext != nullptr ? 1u << 1 : 0u) |
-                          (!_isActive ? 1u << 2 : 0u) | (IsLowResMV() ? 1u << 3 : 0u) | (nativeAA ? 1u << 4 : 0u) |
+                          (IsLowResMV() ? 1u << 3 : 0u) | (nativeAA ? 1u << 4 : 0u) |
                           ((State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ? 1u << 5 : 0u) |
                           (Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default() ? 1u << 6 : 0u));
 
@@ -884,7 +884,7 @@ void XeFG_Dx12::DestroyFGContext()
 {
     XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyFGContextEnter, reinterpret_cast<uint64_t>(_swapChain),
                       reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
-                      0, (_isActive ? 1u : 0u) | (IsPaused() ? 1u << 1 : 0u));
+                      0, 0);
     Deactivate();
 
     if (_fgContext != nullptr)
@@ -893,7 +893,7 @@ void XeFG_Dx12::DestroyFGContext()
     ReleaseObjects();
     XeFGTrace::Record(XeFGTrace::EventType::XeFGDestroyFGContextExit, reinterpret_cast<uint64_t>(_swapChain),
                       reinterpret_cast<uint64_t>(_fgContext), reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0,
-                      0, (_isActive ? 1u : 0u) | (IsPaused() ? 1u << 1 : 0u));
+                      0, 0);
 }
 
 bool XeFG_Dx12::Shutdown()

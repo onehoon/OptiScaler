@@ -709,18 +709,14 @@ static Fsr3::FfxErrorCode hkffxFsr3ConfigureFrameGeneration(void* context, Fsr3:
 
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg),
                           reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
-                          (config->frameGenerationEnabled ? 1u : 0u) | (fg->IsActive() ? 1u << 1 : 0u) |
-                              (fg->IsPaused() ? 1u << 2 : 0u) |
+                          (config->frameGenerationEnabled ? 1u : 0u) |
                               (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
                           2);
-        XeFGTrace::Record(
-            XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg),
-            reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
-            (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default()
-                 ? 1u
-                 : 0u) |
-                ((!fg->IsPaused()) ? 1u << 1 : 0u),
-            2);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
+                          (config->frameGenerationEnabled ? 1u : 0u) |
+                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          2);
 
         if (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
         {
@@ -730,8 +726,7 @@ static Fsr3::FfxErrorCode hkffxFsr3ConfigureFrameGeneration(void* context, Fsr3:
                                   reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0, 2);
                 fg->Activate();
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateAfter, 0, reinterpret_cast<uint64_t>(fg),
-                                  reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0,
-                                  (fg->IsActive() ? 1u : 0u) | (fg->IsPaused() ? 1u << 1 : 0u), 2);
+                                  reinterpret_cast<uint64_t>(context), 0, 0, 0, 0, 0, 0, 2);
                 fg->ResetCounters();
             }
         }
@@ -811,18 +806,16 @@ static Fsr3::FfxErrorCode hkffxSetFrameGenerationConfigToSwapchainDX12(Fsr3::Ffx
 
         s.fsrfgInputActive = config->frameGenerationEnabled;
 
-        XeFGTrace::Record(
-            XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0, 0,
-            (config->frameGenerationEnabled ? 1u : 0u) | (fg->IsActive() ? 1u << 1 : 0u) |
-                (fg->IsPaused() ? 1u << 2 : 0u) | (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
-            2);
-        XeFGTrace::Record(
-            XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0, 0,
-            (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default()
-                 ? 1u
-                 : 0u) |
-                ((!fg->IsPaused()) ? 1u << 1 : 0u),
-            2);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0,
+                          0,
+                          (config->frameGenerationEnabled ? 1u : 0u) |
+                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          2);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0, 0, 0,
+                          0,
+                          (config->frameGenerationEnabled ? 1u : 0u) |
+                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          2);
 
         if (config->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
         {
@@ -832,7 +825,7 @@ static Fsr3::FfxErrorCode hkffxSetFrameGenerationConfigToSwapchainDX12(Fsr3::Ffx
                                   0, 0, 0, 2);
                 fg->Activate();
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateAfter, 0, reinterpret_cast<uint64_t>(fg), 0, 0, 0,
-                                  0, 0, 0, (fg->IsActive() ? 1u : 0u) | (fg->IsPaused() ? 1u << 1 : 0u), 2);
+                                  0, 0, 0, 0, 2);
                 fg->ResetCounters();
             }
         }

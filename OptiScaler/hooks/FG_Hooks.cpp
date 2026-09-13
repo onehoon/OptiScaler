@@ -42,12 +42,7 @@ uint32_t FGHooks::TraceFlags()
     if (_skipPresent1)
         flags |= XeFGTrace::SkipPresent1;
 
-    auto* fg = State::Instance().currentFG;
-    if (fg != nullptr)
-    {
-        flags |= XeFGTrace::XeFGActive * static_cast<uint32_t>(fg->IsActive());
-        flags |= XeFGTrace::XeFGPaused * static_cast<uint32_t>(fg->IsPaused());
-    }
+    // Do not sample mutable FG state here. This helper runs from multiple hook and lifecycle threads.
     return flags;
 }
 

@@ -532,18 +532,14 @@ ffxReturnCode_t ffxConfigure_Dx12FG(ffxContext* context, ffxConfigureDescHeader*
 
         XeFGTrace::Record(XeFGTrace::EventType::FSRFGConfigObserved, 0, reinterpret_cast<uint64_t>(fg),
                           reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0,
-                          (cDesc->frameGenerationEnabled ? 1u : 0u) | (fg->IsActive() ? 1u << 1 : 0u) |
-                              (fg->IsPaused() ? 1u << 2 : 0u) |
+                          (cDesc->frameGenerationEnabled ? 1u : 0u) |
                               (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
                           static_cast<uint32_t>(fIndex));
-        XeFGTrace::Record(
-            XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg),
-            reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0,
-            (cDesc->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default()
-                 ? 1u
-                 : 0u) |
-                ((!fg->IsPaused()) ? 1u << 1 : 0u),
-            1);
+        XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateDecision, 0, reinterpret_cast<uint64_t>(fg),
+                          reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0,
+                          (cDesc->frameGenerationEnabled ? 1u : 0u) |
+                              (Config::Instance()->FGEnabled.value_or_default() ? 1u << 3 : 0u),
+                          1);
 
         if (cDesc->frameGenerationEnabled && !fg->IsActive() && Config::Instance()->FGEnabled.value_or_default())
         {
@@ -553,8 +549,7 @@ ffxReturnCode_t ffxConfigure_Dx12FG(ffxContext* context, ffxConfigureDescHeader*
                                   reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0, 1);
                 fg->Activate();
                 XeFGTrace::Record(XeFGTrace::EventType::FSRFGActivateAfter, 0, reinterpret_cast<uint64_t>(fg),
-                                  reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0,
-                                  (fg->IsActive() ? 1u : 0u) | (fg->IsPaused() ? 1u << 1 : 0u), 1);
+                                  reinterpret_cast<uint64_t>(_device), cDesc->frameID, 0, 0, 0, 0, 0, 1);
                 fg->ResetCounters();
             }
         }
