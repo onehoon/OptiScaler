@@ -20,7 +20,8 @@ inline static void LogXeFGResult(const char* apiName, xefg_swapchain_result_t re
     if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         return;
 
-    LOG_XEFG_DIAG("FAILURE api={} result={} raw={}", apiName, magic_enum::enum_name(result),
+    const char* resultClass = IsXeFGWarning(result) ? "warning" : "error";
+    LOG_XEFG_DIAG("RESULT api={} class={} result={} raw={}", apiName, resultClass, magic_enum::enum_name(result),
                   static_cast<int32_t>(result));
 
     if (IsXeFGWarning(result))
@@ -59,6 +60,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 {
     if (XeFGProxy::Module() == nullptr && !XeFGProxy::InitXeFG())
     {
+        LOG_XEFG_DIAG("FAILURE stage=InitXeFG reason=module_init_failed");
         LOG_ERROR("XeFG proxy can't find libxess_fg.dll!");
         return false;
     }
@@ -107,6 +109,8 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
                 XeLLProxy::SetSleepMode()((xell_context_handle_t) fakenvapi::getCurrentContext(), &sleepParams);
             if (xellResult != XELL_RESULT_SUCCESS)
             {
+                LOG_XEFG_DIAG("FAILURE stage=SetSleepMode result={} raw={}", magic_enum::enum_name(xellResult),
+                              static_cast<int32_t>(xellResult));
                 LOG_ERROR("SetSleepMode error: {} ({})", magic_enum::enum_name(xellResult), (UINT) xellResult);
                 return false;
             }
@@ -140,6 +144,8 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
             auto xellResult = InputXeLL::SetSleepMode(localXellContext, &sleepParams);
             if (xellResult != XELL_RESULT_SUCCESS)
             {
+                LOG_XEFG_DIAG("FAILURE stage=SetSleepMode result={} raw={}", magic_enum::enum_name(xellResult),
+                              static_cast<int32_t>(xellResult));
                 LOG_ERROR("SetSleepMode error: {} ({})", magic_enum::enum_name(xellResult), (UINT) xellResult);
                 return false;
             }
@@ -161,6 +167,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 #endif
         else
         {
+            LOG_XEFG_DIAG("FAILURE stage=CreateXeLL reason=context_create_failed");
             LOG_ERROR("Couldn't create XeLL");
             return false;
         }
@@ -175,8 +182,12 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 bool XeFG_Dx12::AbortSwapchainInitialization(const char* stage)
 {
     if (_swapChainContext == nullptr)
+    {
+        LOG_XEFG_DIAG("FAILURE stage={} reason=init_aborted context=0", stage);
         return false;
+    }
 
+    LOG_XEFG_DIAG("FAILURE stage={} reason=init_aborted context={:X}", stage, (size_t) _swapChainContext);
     LOG_ERROR("[XeFG][Lifecycle] action = init_aborted, stage = {}, context = {:X}", stage, (size_t) _swapChainContext);
 
     if (!DestroySwapchainContext())
@@ -397,7 +408,10 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         LOG_DEBUG("Creating swapchain context for the first time");
 
         if (State::Instance().currentD3D12Device == nullptr)
+        {
+            LOG_XEFG_DIAG("FAILURE stage=CreateSwapchain reason=d3d12_device_missing");
             return false;
+        }
 
         if (!CreateSwapchainContext(State::Instance().currentD3D12Device))
             return AbortSwapchainInitialization("CreateSwapchainContext");
@@ -429,9 +443,20 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     if (!CheckForRealObject(__FUNCTION__, cmdQueue, (IUnknown**) &realQueue))
         realQueue = cmdQueue;
 
-    IDXGIFactory2* factory12 = nullptr;
-    if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
+    if (realFactory == nullptr)
+    {
+        LOG_XEFG_DIAG("FAILURE stage=CreateSwapchain reason=factory_missing");
         return false;
+    }
+
+    IDXGIFactory2* factory12 = nullptr;
+    const HRESULT factoryQueryResult = realFactory->QueryInterface(IID_PPV_ARGS(&factory12));
+    if (factoryQueryResult != S_OK)
+    {
+        LOG_XEFG_DIAG("FAILURE stage=QueryInterfaceFactory2 api=CreateSwapchain result={}",
+                      static_cast<long>(factoryQueryResult));
+        return false;
+    }
 
     HWND hwnd = desc->OutputWindow;
     DXGI_SWAP_CHAIN_DESC1 scDesc {};
@@ -641,7 +666,10 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     if (_swapChainContext == nullptr)
     {
         if (State::Instance().currentD3D12Device == nullptr)
+        {
+            LOG_XEFG_DIAG("FAILURE stage=CreateSwapchain1 reason=d3d12_device_missing");
             return false;
+        }
 
         if (!CreateSwapchainContext(State::Instance().currentD3D12Device))
             return AbortSwapchainInitialization("CreateSwapchainContext");
@@ -673,9 +701,20 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     if (!CheckForRealObject(__FUNCTION__, cmdQueue, (IUnknown**) &realQueue))
         realQueue = cmdQueue;
 
-    IDXGIFactory2* factory12 = nullptr;
-    if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
+    if (realFactory == nullptr)
+    {
+        LOG_XEFG_DIAG("FAILURE stage=CreateSwapchain1 reason=factory_missing");
         return false;
+    }
+
+    IDXGIFactory2* factory12 = nullptr;
+    const HRESULT factoryQueryResult = realFactory->QueryInterface(IID_PPV_ARGS(&factory12));
+    if (factoryQueryResult != S_OK)
+    {
+        LOG_XEFG_DIAG("FAILURE stage=QueryInterfaceFactory2 api=CreateSwapchain1 result={}",
+                      static_cast<long>(factoryQueryResult));
+        return false;
+    }
 
     xefg_swapchain_d3d12_init_params_t params {};
 
@@ -733,13 +772,14 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 #ifndef DONT_USE_XMX
         ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
 #endif // !DONT_USE_XMX
+        const int fullscreenDescPresent = pFullscreenDesc != nullptr ? 1 : 0;
+        const int windowed = pFullscreenDesc != nullptr ? (pFullscreenDesc->Windowed ? 1 : 0) : -1;
         LOG_XEFG_DIAG("api=InitFromSwapChainDesc stage=enter context={:X} hwnd={:X} queue={:X} factory={:X} width={} "
                       "height={} format={} buffer_count={} swap_effect={} flags={:X} windowed={} init_flags={:X} "
-                      "max_interpolated_frames={}",
+                      "fullscreen_desc_present={} max_interpolated_frames={}",
                       (size_t) _swapChainContext, (size_t) hwnd, (size_t) realQueue, (size_t) factory12, desc->Width,
                       desc->Height, (UINT) desc->Format, desc->BufferCount, (UINT) desc->SwapEffect, desc->Flags,
-                      pFullscreenDesc != nullptr && pFullscreenDesc->Windowed ? 1 : 0, (UINT) params.initFlags,
-                      params.maxInterpolatedFrames);
+                      windowed, (UINT) params.initFlags, fullscreenDescPresent, params.maxInterpolatedFrames);
         result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, desc, pFullscreenDesc, realQueue,
                                                          factory12, &params);
         LOG_XEFG_DIAG("api=InitFromSwapChainDesc stage=return context={:X} result={} raw={}",

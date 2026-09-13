@@ -83,9 +83,13 @@ void PrepareLogger()
             if (Config::Instance()->OpenConsole.value_or_default())
                 InitializeConsole();
 
+            const int configuredLevel = Config::Instance()->LogLevel.value_or_default();
+            const bool xefgDiagnosticMode = configuredLevel == kXeFGDiagnosticLogLevel;
+            const bool useAsync = !xefgDiagnosticMode && Config::Instance()->LogAsync.value_or_default();
+
             std::shared_ptr<spdlog::logger> shared_logger = nullptr;
 
-            if (Config::Instance()->LogAsync.value_or_default())
+            if (useAsync)
             {
                 // Set the queue size for asynchronous logging
                 spdlog::init_thread_pool(8192, Config::Instance()->LogAsyncThreads.value_or_default());
@@ -152,7 +156,7 @@ void PrepareLogger()
 
             sinks.push_back(callback_sink);
 
-            if (Config::Instance()->LogAsync.value_or_default())
+            if (useAsync)
             {
                 shared_logger =
                     std::make_shared<spdlog::async_logger>("multi_sink_logger", sinks.begin(), sinks.end(),
@@ -164,8 +168,6 @@ void PrepareLogger()
                 shared_logger = std::make_shared<spdlog::logger>(logger);
             }
 
-            const int configuredLevel = Config::Instance()->LogLevel.value_or_default();
-            const bool xefgDiagnosticMode = configuredLevel == kXeFGDiagnosticLogLevel;
             const auto spdlogLevel =
                 xefgDiagnosticMode ? spdlog::level::critical : static_cast<spdlog::level::level_enum>(configuredLevel);
 
@@ -175,7 +177,7 @@ void PrepareLogger()
             spdlog::set_default_logger(shared_logger);
 
             if (xefgDiagnosticMode)
-                LOG_XEFG_DIAG("mode=enabled log_level=7 async=false");
+                LOG_XEFG_DIAG("mode=enabled log_level=7 async={}", useAsync ? "true" : "false");
         }
     }
     catch (const spdlog::spdlog_ex& ex)
