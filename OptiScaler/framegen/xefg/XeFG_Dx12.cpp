@@ -1679,6 +1679,17 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, IUnknown* final
         finalProxyReleased = true;
     };
 
+    // The lifecycle associated with this proxy may already have been retired
+    // while we were waiting for the lifecycle mutex. Never let an old proxy's
+    // final COM release tear down a newer _swapChainContext.
+    if (state.currentFGSwapchain != finalProxy)
+    {
+        LOG_DEBUG("[XeFG][Lifecycle] action = stale_final_proxy_release_only, proxy = {:X}, current = {:X}",
+                  (size_t) finalProxy, (size_t) state.currentFGSwapchain);
+        releaseFinalProxyOnce();
+        return true;
+    }
+
     const bool releaseSucceeded = ReleaseSwapchainLocked(hwnd, releaseFinalProxyOnce);
 
     if (!finalProxyReleased)
