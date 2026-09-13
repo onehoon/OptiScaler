@@ -63,7 +63,8 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
                           bool readyToRelease) override final;
 
     bool ReleaseSwapchain(HWND hwnd) override final;
-    bool ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy);
+    bool ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, IUnknown* finalProxy,
+                                               std::function<void()> releaseFinalProxy);
 
     void CreateContext(ID3D12Device* device, FG_Constants& fgConstants) override final;
     void Activate() override final;

@@ -1288,7 +1288,7 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
                 if (auto* xefg = dynamic_cast<XeFG_Dx12*>(state.currentFG); xefg != nullptr)
                 {
                     releaseSucceeded =
-                        xefg->ReleaseSwapchainFromFinalProxyRelease(_hwnd, [This]() { o_FGRelease(This); });
+                        xefg->ReleaseSwapchainFromFinalProxyRelease(_hwnd, This, [This]() { o_FGRelease(This); });
                 }
                 else
                 {

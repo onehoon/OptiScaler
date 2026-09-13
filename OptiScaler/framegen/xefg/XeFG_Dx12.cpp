@@ -1652,11 +1652,12 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
     return ReleaseSwapchainLocked(hwnd);
 }
 
-bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<void()> releaseFinalProxy)
+bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, IUnknown* finalProxy,
+                                                      std::function<void()> releaseFinalProxy)
 {
     std::unique_lock lifecycleLock(_swapchainLifecycleMutex);
 
-    if (!releaseFinalProxy)
+    if (finalProxy == nullptr || !releaseFinalProxy)
     {
         LOG_ERROR("[XeFG][Lifecycle] action = release_swapchain_aborted, "
                   "reason = missing_final_proxy_release");
@@ -1664,7 +1665,6 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, std::function<v
     }
 
     auto& state = State::Instance();
-    auto* const finalProxy = state.currentFGSwapchain;
     bool finalProxyReleased = false;
     auto releaseFinalProxyOnce = [&]()
     {
