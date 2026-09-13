@@ -6,6 +6,7 @@
 #include <proxies/XeFG_Proxy.h>
 
 #include "shaders/depth_invert/DI_Dx12.h"
+#include "shaders/output_scaling/OS_Dx12.h"
 
 #include <xell.h>
 #include <xell_d3d12.h>
@@ -26,12 +27,14 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     bool _uiComposition = false;
 
     std::unique_ptr<DI_Dx12> _depthInvert;
+    std::unique_ptr<OS_Dx12> _hudlessScaler[BUFFER_COUNT];
 
     static void xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData);
 
     bool CreateSwapchainContext(ID3D12Device* device);
     bool DestroySwapchainContext();
     xefg_swapchain_d3d12_resource_data_t GetResourceData(FG_ResourceType type, int index = -1);
+    bool ScaleHudlessToSwapchain(Dx12Resource* fResource, Dx12Resource* inputResource, int index, uint32_t frameId);
 
     bool Dispatch();
 

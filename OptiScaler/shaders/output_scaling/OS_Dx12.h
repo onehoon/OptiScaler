@@ -26,6 +26,9 @@ class OS_Dx12 : public Shader_Dx12
     void SetBufferState(ID3D12GraphicsCommandList* InCommandList, D3D12_RESOURCE_STATES InState);
     bool Dispatch(ID3D12Device* InDevice, ID3D12GraphicsCommandList* InCmdList, ID3D12Resource* InResource,
                   ID3D12Resource* OutResource);
+    bool Dispatch(ID3D12Device* InDevice, ID3D12GraphicsCommandList* InCmdList, ID3D12Resource* InResource,
+                  ID3D12Resource* OutResource, uint32_t InSrcWidth, uint32_t InSrcHeight, uint32_t InDstWidth,
+                  uint32_t InDstHeight);
 
     ID3D12Resource* Buffer() { return _buffer; }
     bool IsUpsampling() { return _upsample; }

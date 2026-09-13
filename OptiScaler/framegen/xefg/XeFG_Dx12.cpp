@@ -1132,6 +1132,123 @@ void XeFG_Dx12::ReleaseObjects()
     _mvFlip.reset();
     _depthFlip.reset();
     _depthInvert.reset();
+
+    for (auto& scaler : _hudlessScaler)
+        scaler.reset();
+}
+
+bool XeFG_Dx12::ScaleHudlessToSwapchain(Dx12Resource* fResource, Dx12Resource* inputResource, int index,
+                                        uint32_t frameId)
+{
+    if (fResource == nullptr || inputResource == nullptr || inputResource->resource == nullptr ||
+        !Config::Instance()->FGFullResHudlessPOC.value_or_default() ||
+        State::Instance().activeFgInput != FGInput::DLSSG)
+    {
+        return false;
+    }
+
+    const auto sourceDesc = inputResource->resource->GetDesc();
+    const auto swapchainWidth = State::Instance().currentSwapchainDesc.BufferDesc.Width;
+    const auto swapchainHeight = State::Instance().currentSwapchainDesc.BufferDesc.Height;
+
+    if (sourceDesc.Width == 0 || sourceDesc.Height == 0 || swapchainWidth == 0 || swapchainHeight == 0)
+    {
+        LOG_WARN("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=invalid-dimensions source={}x{} "
+                 "swapchain={}x{} original=({},{} {}x{})",
+                 frameId, index, sourceDesc.Width, sourceDesc.Height, swapchainWidth, swapchainHeight,
+                 inputResource->left, inputResource->top, inputResource->width, inputResource->height);
+        return false;
+    }
+
+    if (sourceDesc.Width == swapchainWidth && sourceDesc.Height == swapchainHeight)
+    {
+        LOG_INFO("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=already-matching source={}x{} "
+                 "swapchain={}x{} original=({},{} {}x{}) scaled=original",
+                 frameId, index, sourceDesc.Width, sourceDesc.Height, swapchainWidth, swapchainHeight,
+                 inputResource->left, inputResource->top, inputResource->width, inputResource->height);
+        return false;
+    }
+
+    if (sourceDesc.Width > swapchainWidth || sourceDesc.Height > swapchainHeight)
+    {
+        LOG_WARN("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=source-not-smaller source={}x{} "
+                 "swapchain={}x{} original=({},{} {}x{}) scaled=original",
+                 frameId, index, sourceDesc.Width, sourceDesc.Height, swapchainWidth, swapchainHeight,
+                 inputResource->left, inputResource->top, inputResource->width, inputResource->height);
+        return false;
+    }
+
+    if (_hudlessScaler[index] == nullptr)
+        _hudlessScaler[index] = std::make_unique<OS_Dx12>("HudlessScale", _device, true);
+
+    auto& scaler = _hudlessScaler[index];
+    if (scaler == nullptr || !scaler->CanRender())
+    {
+        LOG_ERROR("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=scaler-not-ready", frameId, index);
+        return false;
+    }
+
+    auto cmdList = inputResource->cmdList != nullptr ? inputResource->cmdList : GetUICommandList(index);
+    if (cmdList == nullptr)
+    {
+        LOG_ERROR("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=command-list-null", frameId, index);
+        return false;
+    }
+
+    if (!scaler->CreateBufferResource(_device, inputResource->resource, swapchainWidth, swapchainHeight,
+                                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS) ||
+        scaler->Buffer() == nullptr)
+    {
+        LOG_ERROR(
+            "[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=intermediate-allocation-failed source={}x{} "
+            "destination={}x{} format={} original=({},{} {}x{})",
+            frameId, index, sourceDesc.Width, sourceDesc.Height, swapchainWidth, swapchainHeight,
+            static_cast<uint32_t>(sourceDesc.Format), inputResource->left, inputResource->top, inputResource->width,
+            inputResource->height);
+        return false;
+    }
+
+    ResourceBarrier(cmdList, inputResource->resource, inputResource->state,
+                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    scaler->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    const bool dispatched =
+        scaler->Dispatch(_device, cmdList, inputResource->resource, scaler->Buffer(),
+                         static_cast<uint32_t>(sourceDesc.Width), sourceDesc.Height, swapchainWidth, swapchainHeight);
+
+    ResourceBarrier(cmdList, inputResource->resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                    inputResource->state);
+
+    if (!dispatched)
+    {
+        LOG_ERROR("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=false reason=dispatch-failed source={}x{} "
+                  "destination={}x{} format={} original=({},{} {}x{})",
+                  frameId, index, sourceDesc.Width, sourceDesc.Height, swapchainWidth, swapchainHeight,
+                  static_cast<uint32_t>(sourceDesc.Format), inputResource->left, inputResource->top,
+                  inputResource->width, inputResource->height);
+        return false;
+    }
+
+    scaler->SetBufferState(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    fResource->resource = scaler->Buffer();
+    fResource->copy = nullptr;
+    fResource->left = 0;
+    fResource->top = 0;
+    fResource->width = swapchainWidth;
+    fResource->height = swapchainHeight;
+    fResource->state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    fResource->cmdList = cmdList;
+
+    LOG_INFO("[RES-POC][HUDLESS-SCALE] frame={} index={} ran=true sourcePhysical={}x{} sourceLogical=({},{} {}x{}) "
+             "swapchain={}x{} intermediate={}x{} format={} originalSubmission=({},{} {}x{}) "
+             "scaledSubmission=({},{} {}x{})",
+             frameId, index, sourceDesc.Width, sourceDesc.Height, inputResource->left, inputResource->top,
+             inputResource->width, inputResource->height, swapchainWidth, swapchainHeight, fResource->width,
+             fResource->height, static_cast<uint32_t>(sourceDesc.Format), inputResource->left, inputResource->top,
+             inputResource->width, inputResource->height, fResource->left, fResource->top, fResource->width,
+             fResource->height);
+    return true;
 }
 
 void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
@@ -1431,6 +1548,19 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
     fResource->height = inputResource->height;
     fResource->cmdList = inputResource->cmdList;
 
+    int indexDiff = GetIndex() - fIndex;
+    if (indexDiff < 0)
+        indexDiff += BUFFER_COUNT;
+
+    auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
+
+    const bool hudlessScaled =
+        type == FG_ResourceType::HudlessColor && ScaleHudlessToSwapchain(fResource, inputResource, fIndex, frameId);
+    if (hudlessScaled)
+    {
+        LOG_INFO("[RES-POC][HUDLESS-SCALE] index={} XeFG submission uses the scaled intermediate", fIndex);
+    }
+
     auto willFlip = State::Instance().activeFgInput == FGInput::Upscaler &&
                     Config::Instance()->FGResourceFlip.value_or_default() &&
                     (type == FG_ResourceType::Velocity || type == FG_ResourceType::Depth);
@@ -1547,11 +1677,6 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
             }
         }
 
-        int indexDiff = GetIndex() - fIndex;
-        if (indexDiff < 0)
-            indexDiff += BUFFER_COUNT;
-
-        auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
         const bool submitToXeFG =
             type != FG_ResourceType::UIColor ||
             (XeFGProxy::SetUiCompositionState() != nullptr || Config::Instance()->FGDrawUIOverFG.value_or_default());

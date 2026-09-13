@@ -128,6 +128,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             FGPreserveSwapChain.set_from_config(readBool("FrameGen", "PreserveSwapChain"));
             FGSkipResizeBuffers.set_from_config(readBool("FrameGen", "SkipResizeBuffers"));
             FGModifyBufferState.set_from_config(readBool("FrameGen", "ModifyBufferState"));
+            FGFullResHudlessPOC.set_from_config(readBool("FrameGen", "FullResHudlessPOC"));
             FGModifySCIndex.set_from_config(readBool("FrameGen", "ModifySCIndex"));
         }
 
@@ -826,6 +827,8 @@ bool Config::SaveIni()
                      GetBoolValue(Instance()->FGSkipResizeBuffers.value_for_config()).c_str());
         ini.SetValue("FrameGen", "ModifyBufferState",
                      GetBoolValue(Instance()->FGModifyBufferState.value_for_config()).c_str());
+        ini.SetValue("FrameGen", "FullResHudlessPOC",
+                     GetBoolValue(Instance()->FGFullResHudlessPOC.value_for_config()).c_str());
         ini.SetValue("FrameGen", "ModifySCIndex", GetBoolValue(Instance()->FGModifySCIndex.value_for_config()).c_str());
     }
 

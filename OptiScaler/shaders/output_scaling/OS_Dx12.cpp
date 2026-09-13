@@ -52,6 +52,15 @@ void OS_Dx12::SetBufferState(ID3D12GraphicsCommandList* InCommandList, D3D12_RES
 bool OS_Dx12::Dispatch(ID3D12Device* InDevice, ID3D12GraphicsCommandList* InCmdList, ID3D12Resource* InResource,
                        ID3D12Resource* OutResource)
 {
+    return Dispatch(InDevice, InCmdList, InResource, OutResource, State::Instance().currentFeature->TargetWidth(),
+                    State::Instance().currentFeature->TargetHeight(), State::Instance().currentFeature->DisplayWidth(),
+                    State::Instance().currentFeature->DisplayHeight());
+}
+
+bool OS_Dx12::Dispatch(ID3D12Device* InDevice, ID3D12GraphicsCommandList* InCmdList, ID3D12Resource* InResource,
+                       ID3D12Resource* OutResource, uint32_t InSrcWidth, uint32_t InSrcHeight, uint32_t InDstWidth,
+                       uint32_t InDstHeight)
+{
     if (!_init || InDevice == nullptr || InCmdList == nullptr || InResource == nullptr || OutResource == nullptr)
         return false;
 
@@ -81,15 +90,13 @@ bool OS_Dx12::Dispatch(ID3D12Device* InDevice, ID3D12GraphicsCommandList* InCmdL
 
     InDevice->CreateUnorderedAccessView(OutResource, nullptr, &uavDesc, currentHeap.GetUavCPU(0));
 
-    FsrEasuCon(fsr1Constants.const0, fsr1Constants.const1, fsr1Constants.const2, fsr1Constants.const3,
-               State::Instance().currentFeature->TargetWidth(), State::Instance().currentFeature->TargetHeight(),
-               State::Instance().currentFeature->TargetWidth(), State::Instance().currentFeature->TargetHeight(),
-               State::Instance().currentFeature->DisplayWidth(), State::Instance().currentFeature->DisplayHeight());
+    FsrEasuCon(fsr1Constants.const0, fsr1Constants.const1, fsr1Constants.const2, fsr1Constants.const3, InSrcWidth,
+               InSrcHeight, InSrcWidth, InSrcHeight, InDstWidth, InDstHeight);
 
-    constants.srcWidth = State::Instance().currentFeature->TargetWidth();
-    constants.srcHeight = State::Instance().currentFeature->TargetHeight();
-    constants.destWidth = State::Instance().currentFeature->DisplayWidth();
-    constants.destHeight = State::Instance().currentFeature->DisplayHeight();
+    constants.srcWidth = InSrcWidth;
+    constants.srcHeight = InSrcHeight;
+    constants.destWidth = InDstWidth;
+    constants.destHeight = InDstHeight;
 
     // Create CBV for Constants
     D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
@@ -155,9 +162,8 @@ bool OS_Dx12::Dispatch(ID3D12Device* InDevice, ID3D12GraphicsCommandList* InCmdL
     UINT dispatchWidth = 0;
     UINT dispatchHeight = 0;
 
-    dispatchWidth =
-        static_cast<UINT>((State::Instance().currentFeature->DisplayWidth() + InNumThreadsX - 1) / InNumThreadsX);
-    dispatchHeight = (State::Instance().currentFeature->DisplayHeight() + InNumThreadsY - 1) / InNumThreadsY;
+    dispatchWidth = static_cast<UINT>((InDstWidth + InNumThreadsX - 1) / InNumThreadsX);
+    dispatchHeight = (InDstHeight + InNumThreadsY - 1) / InNumThreadsY;
 
     InCmdList->Dispatch(dispatchWidth, dispatchHeight, 1);
 
