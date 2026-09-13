@@ -108,7 +108,8 @@ PR #12 intentionally works when:
 ```text
 StreamlineSpoofing = true
 DxgiSpoofing       = false
-Intel primary GPU  = true
+game quirk         = FixSlReflexAvailabilityOnIntel
+returned adapter   = Intel descriptor
 ```
 
 but release/0.9's local `SkipSpoofing()` returns `true` whenever `DxgiSpoofing == false`.
@@ -225,12 +226,12 @@ File:
 OptiScaler/spoofing/Dxgi_Spoofing.cpp
 ```
 
-Add explicit includes if not already available through the PCH:
+Add the release/0.9-local state and quirk includes if not already available through
+the PCH:
 
 ```cpp
 #include <State.h>
 #include <misc/Quirks.h>
-#include <misc/IdentifyGpu.h>
 ```
 
 Do **not** include:
@@ -241,12 +242,18 @@ Do **not** include:
 
 because that subsystem is master-only and is out of scope for PR25.
 
+The master-only `misc/IdentifyGpu.h` / `IdentifyGpu::getPrimaryGpu()` contract is
+also out of scope. Release/0.9 does not contain that subsystem. The selective
+path must instead evaluate the real vendor in the descriptor returned by the
+current `GetDesc*` hook. This keeps the 0.9 backport within the existing five-file
+scope and makes the non-Intel negative path explicit.
+
 Place the new helper functions after the existing release/0.9 local `SkipSpoofing()` definition, or otherwise ensure the local helper is declared before use.
 
 Recommended release/0.9 implementation:
 
 ```cpp
-inline static bool IsIntelReflexDxgiQuirkEligible()
+inline static bool IsIntelReflexDxgiQuirkConfigured()
 {
     const auto* config = Config::Instance();
     const auto& state = State::Instance();
@@ -264,9 +271,19 @@ inline static bool IsIntelReflexDxgiQuirkEligible()
         return false;
     }
 
-    return IdentifyGpu::getPrimaryGpu().vendorId == VendorId::Intel;
+    return true;
+}
+
+inline static bool IsIntelReflexDxgiQuirkEligible(uint32_t vendorId)
+{
+    return IsIntelReflexDxgiQuirkConfigured() && vendorId == VendorId::Intel;
 }
 ```
+
+The final return in the configuration helper is `true`; Intel eligibility is
+checked separately against the descriptor received by the hook. In particular,
+do not reintroduce a primary-GPU lookup or a master-only GPU-identification
+subsystem in this PR.
 
 Caller filtering must use the release/0.9 state member name:
 
@@ -274,7 +291,7 @@ Caller filtering must use the release/0.9 state member name:
 template <typename T>
 inline static bool ShouldApplyIntelReflexGameIdentity(const std::string& caller, const T* desc)
 {
-    if (!IsIntelReflexDxgiQuirkEligible() ||
+    if (!IsIntelReflexDxgiQuirkEligible(desc->VendorId) ||
         !iequals(caller, State::Instance().GameExe))
     {
         return false;
@@ -344,11 +361,14 @@ The quirk must remain **game-caller selective**. It must not turn broad DXGI spo
 Expected behavior:
 
 ```text
-RE9/PRAGMATA game EXE calls GetDesc*:
+RE9/PRAGMATA game EXE calls GetDesc* for an Intel descriptor:
     -> selective configured NVIDIA identity may be returned
 
 fakenvapi / DXGI / D3D12 / Vulkan / other internal callers:
     -> preserve existing release/0.9 behavior
+
+RE9/PRAGMATA game EXE calls GetDesc* for AMD/NVIDIA descriptors:
+    -> descriptor identity remains unchanged
 
 other games:
     -> no PR12 selective behavior
@@ -373,7 +393,7 @@ void DxgiSpoofing::AttachToAdapter(IUnknown* unkAdapter)
         Config::Instance()->DxgiSpoofing.value_or_default() ||
         Config::Instance()->DxgiVRAM.has_value();
 
-    const bool intelReflexQuirkNeeded = IsIntelReflexDxgiQuirkEligible();
+    const bool intelReflexQuirkNeeded = IsIntelReflexDxgiQuirkConfigured();
 
     if (!normalDxgiHooksNeeded && !intelReflexQuirkNeeded)
     {
@@ -759,10 +779,18 @@ On AMD or NVIDIA, or by static/log verification if hardware is unavailable:
 
 ```text
 FixSlReflexAvailabilityOnIntel may be present in the game quirk table,
-but IsIntelReflexDxgiQuirkEligible() must return false.
+but IsIntelReflexDxgiQuirkEligible(desc->VendorId) must return false for
+AMD/NVIDIA descriptors.
 ```
 
 Do not selectively rewrite the game adapter identity on non-Intel hardware.
+
+Hybrid-GPU expectation: this release/0.9 backport intentionally does not make a
+global primary-GPU determination. It applies only when the game caller receives
+an Intel adapter descriptor. If a hybrid system exposes both Intel and NVIDIA
+descriptors, only the Intel descriptor is eligible and the NVIDIA descriptor must
+remain unchanged. This is intentionally narrower than master PR #12 and should
+be covered by the runtime or static/log validation.
 
 ---
 
@@ -770,8 +798,8 @@ Do not selectively rewrite the game adapter identity on non-Intel hardware.
 
 PR25 is ready to merge only if all conditions below are true.
 
-1. RE9 and PRAGMATA have the exact intended selective Reflex DXGI quirk from master PR #12.
-2. The implementation is adapted to release/0.9 (`GameExe`, legacy `skipSpoofing`) rather than copied blindly from master.
+1. RE9 and PRAGMATA have the intended selective Reflex DXGI behavior adapted from master PR #12: only a game-caller Intel descriptor is eligible.
+2. The implementation is adapted to release/0.9 (`GameExe`, legacy `skipSpoofing`, and no master-only `IdentifyGpu`) rather than copied blindly from master.
 3. The release/0.9 local `SkipSpoofing()` semantic trap is avoided.
 4. Broad `Dxgi=false` remains broad spoofing off; only the game-caller selective identity path is added.
 5. Existing internal caller exclusions remain branch-local and are not replaced by master wholesale.
@@ -802,9 +830,9 @@ Complete the low-risk compatibility parity pass for the `reframework-0.9` line a
 ## Important branch adaptations
 
 - Uses release/0.9 `State::GameExe`, not master `gameExe`.
-- Does not import master `misc/SkipSpoof`.
+- Does not import master `misc/SkipSpoof` or `misc/IdentifyGpu`.
 - Uses `State::skipSpoofing` for the selective Reflex quirk suppression gate because the release/0.9 local `SkipSpoofing()` returns true whenever broad DXGI spoofing is disabled.
-- Preserves existing release/0.9 caller exclusions and spoofing behavior.
+- Checks the returned descriptor vendor directly, so AMD/NVIDIA descriptors remain unchanged and the behavior is intentionally narrower than master PR #12 on hybrid systems.
 
 ## Non-goals
 
