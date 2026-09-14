@@ -9,6 +9,8 @@
 #include <magic_enum.hpp>
 #include <wrl/client.h>
 
+#include <tlhelp32.h>
+
 #include <DirectXMath.h>
 
 using namespace DirectX;
@@ -29,6 +31,72 @@ inline static void LogXeFGResult(const char* apiName, xefg_swapchain_result_t re
         LOG_ERROR("{} error: {} ({})", apiName, magic_enum::enum_name(result), static_cast<int32_t>(result));
     }
 }
+
+namespace
+{
+using RefXeFGPreRetireFn = uint32_t(WINAPI*)(IUnknown*, void*, HWND);
+
+enum class RefXeFGProxyRetireStatus : uint32_t
+{
+    SafeNotTracked = 0,
+    SafeDetached = 1,
+    Blocked = 2,
+};
+
+enum class RefHandoffDecision
+{
+    NotAvailable,
+    Safe,
+    Blocked,
+};
+
+RefXeFGPreRetireFn FindREFXeFGPreRetire() noexcept
+{
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetCurrentProcessId());
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return nullptr;
+
+    MODULEENTRY32W entry {};
+    entry.dwSize = sizeof(entry);
+
+    RefXeFGPreRetireFn found = nullptr;
+    if (Module32FirstW(snapshot, &entry))
+    {
+        do
+        {
+            auto* proc = GetProcAddress(entry.hModule, "REFramework_XeFG_PreRetireSwapchainV1");
+            if (proc != nullptr)
+            {
+                found = reinterpret_cast<RefXeFGPreRetireFn>(proc);
+                break;
+            }
+        } while (Module32NextW(snapshot, &entry));
+    }
+
+    CloseHandle(snapshot);
+    return found;
+}
+
+RefHandoffDecision PrepareREFForXeFGProxyRetire(IUnknown* publicProxy, void* context, HWND hwnd) noexcept
+{
+    const auto fn = FindREFXeFGPreRetire();
+    if (fn == nullptr)
+        return RefHandoffDecision::NotAvailable;
+
+    const auto status = fn(publicProxy, context, hwnd);
+    switch (status)
+    {
+    case static_cast<uint32_t>(RefXeFGProxyRetireStatus::SafeNotTracked):
+    case static_cast<uint32_t>(RefXeFGProxyRetireStatus::SafeDetached):
+        return RefHandoffDecision::Safe;
+
+    case static_cast<uint32_t>(RefXeFGProxyRetireStatus::Blocked):
+    default:
+        // Unknown future ABI values are unsafe for this V1 caller.
+        return RefHandoffDecision::Blocked;
+    }
+}
+} // namespace
 
 void XeFG_Dx12::xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData)
 {
@@ -1685,6 +1753,27 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, IUnknown* final
                   (size_t) finalProxy, (size_t) state.currentFGSwapchain);
         releaseFinalProxyOnce();
         return true;
+    }
+
+    const auto refHandoff = PrepareREFForXeFGProxyRetire(finalProxy, _swapChainContext, hwnd);
+    if (refHandoff == RefHandoffDecision::Blocked)
+    {
+        _swapchainRecreationBlocked = true;
+
+        LOG_ERROR("[XeFG][Lifecycle] action = final_proxy_release_blocked, "
+                  "reason = ref_pre_retire_handoff_failed, proxy = {:X}, context = {:X}, hwnd = {:X}",
+                  (size_t) finalProxy, (size_t) _swapChainContext, (size_t) hwnd);
+        return false;
+    }
+
+    if (refHandoff == RefHandoffDecision::Safe)
+    {
+        LOG_INFO("[XeFG][Lifecycle] action = ref_pre_retire_handoff_complete, proxy = {:X}, context = {:X}",
+                 (size_t) finalProxy, (size_t) _swapChainContext);
+    }
+    else
+    {
+        LOG_DEBUG("[XeFG][Lifecycle] action = ref_pre_retire_handoff_skipped, reason = export_unavailable");
     }
 
     const bool releaseSucceeded = ReleaseSwapchainLocked(hwnd, releaseFinalProxyOnce);
