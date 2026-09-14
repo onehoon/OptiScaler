@@ -39,6 +39,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
 
     bool CreateSwapchainContext(ID3D12Device* device);
     bool AbortSwapchainInitialization(const char* stage);
+    bool PrepareREFForSwapchainRetire(IUnknown* publicProxy, HWND hwnd, const char* trigger);
     bool DestroySwapchainContext();
     bool ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy = {});
     xefg_swapchain_d3d12_resource_data_t GetResourceData(FG_ResourceType type, int index = -1);

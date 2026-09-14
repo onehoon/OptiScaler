@@ -46,7 +46,8 @@ enum class RefXeFGProxyRetireStatus : uint32_t
 enum class RefHandoffDecision
 {
     NotAvailable,
-    Safe,
+    SafeNotTracked,
+    SafeDetached,
     Blocked,
 };
 
@@ -112,8 +113,10 @@ RefHandoffDecision PrepareREFForXeFGProxyRetire(IUnknown* publicProxy, void* con
     switch (status)
     {
     case static_cast<uint32_t>(RefXeFGProxyRetireStatus::SafeNotTracked):
+        return RefHandoffDecision::SafeNotTracked;
+
     case static_cast<uint32_t>(RefXeFGProxyRetireStatus::SafeDetached):
-        return RefHandoffDecision::Safe;
+        return RefHandoffDecision::SafeDetached;
 
     case static_cast<uint32_t>(RefXeFGProxyRetireStatus::Blocked):
     default:
@@ -290,6 +293,47 @@ feature_version XeFG_Dx12::Version()
 
 HWND XeFG_Dx12::Hwnd() { return _hwnd; }
 
+bool XeFG_Dx12::PrepareREFForSwapchainRetire(IUnknown* publicProxy, HWND hwnd, const char* trigger)
+{
+    if (publicProxy == nullptr || _swapChainContext == nullptr)
+    {
+        LOG_DEBUG("[XeFG][Lifecycle] action = ref_pre_retire_skipped, trigger = {}, "
+                  "outcome = safe_not_tracked, proxy = {:X}, context = {:X}",
+                  trigger, (size_t) publicProxy, (size_t) _swapChainContext);
+        return true;
+    }
+
+    const auto decision = PrepareREFForXeFGProxyRetire(publicProxy, _swapChainContext, hwnd);
+    switch (decision)
+    {
+    case RefHandoffDecision::SafeNotTracked:
+        LOG_INFO("[XeFG][Lifecycle] action = ref_pre_retire_complete, trigger = {}, "
+                 "outcome = safe_not_tracked, proxy = {:X}, context = {:X}",
+                 trigger, (size_t) publicProxy, (size_t) _swapChainContext);
+        return true;
+
+    case RefHandoffDecision::SafeDetached:
+        LOG_INFO("[XeFG][Lifecycle] action = ref_pre_retire_complete, trigger = {}, "
+                 "outcome = safe_detached, proxy = {:X}, context = {:X}",
+                 trigger, (size_t) publicProxy, (size_t) _swapChainContext);
+        return true;
+
+    case RefHandoffDecision::NotAvailable:
+        LOG_DEBUG("[XeFG][Lifecycle] action = ref_pre_retire_skipped, trigger = {}, "
+                  "outcome = unavailable, proxy = {:X}, context = {:X}",
+                  trigger, (size_t) publicProxy, (size_t) _swapChainContext);
+        return true;
+
+    case RefHandoffDecision::Blocked:
+    default:
+        _swapchainRecreationBlocked = true;
+        LOG_ERROR("[XeFG][Lifecycle] action = ref_pre_retire_blocked, trigger = {}, "
+                  "outcome = blocked, proxy = {:X}, context = {:X}, hwnd = {:X}",
+                  trigger, (size_t) publicProxy, (size_t) _swapChainContext, (size_t) hwnd);
+        return false;
+    }
+}
+
 bool XeFG_Dx12::DestroySwapchainContext()
 {
     LOG_DEBUG("");
@@ -458,6 +502,13 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
+            if (!PrepareREFForSwapchainRetire(State::Instance().currentFGSwapchain, _hwnd, "recreate"))
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
+                          "reason = ref_pre_retire_failed");
+                return false;
+            }
+
             if (!ReleaseSwapchainLocked(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain, "
@@ -662,6 +713,13 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         else if (readyToRelease)
         {
             LOG_INFO("Releasing old swapchain");
+            if (!PrepareREFForSwapchainRetire(State::Instance().currentFGSwapchain, _hwnd, "recreate"))
+            {
+                LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
+                          "reason = ref_pre_retire_failed");
+                return false;
+            }
+
             if (!ReleaseSwapchainLocked(_hwnd))
             {
                 LOG_ERROR("[XeFG][Lifecycle] action = recreate_aborted, api = CreateSwapchain1, "
@@ -1793,6 +1851,9 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
         return false;
     }
 
+    if (!PrepareREFForSwapchainRetire(State::Instance().currentFGSwapchain, hwnd, "explicit_release"))
+        return false;
+
     return ReleaseSwapchainLocked(hwnd);
 }
 
@@ -1835,26 +1896,8 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, IUnknown* final
         return true;
     }
 
-    const auto refHandoff = PrepareREFForXeFGProxyRetire(finalProxy, _swapChainContext, hwnd);
-    if (refHandoff == RefHandoffDecision::Blocked)
-    {
-        _swapchainRecreationBlocked = true;
-
-        LOG_ERROR("[XeFG][Lifecycle] action = final_proxy_release_blocked, "
-                  "reason = ref_pre_retire_handoff_failed, proxy = {:X}, context = {:X}, hwnd = {:X}",
-                  (size_t) finalProxy, (size_t) _swapChainContext, (size_t) hwnd);
+    if (!PrepareREFForSwapchainRetire(finalProxy, hwnd, "final_proxy_release"))
         return false;
-    }
-
-    if (refHandoff == RefHandoffDecision::Safe)
-    {
-        LOG_INFO("[XeFG][Lifecycle] action = ref_pre_retire_handoff_complete, proxy = {:X}, context = {:X}",
-                 (size_t) finalProxy, (size_t) _swapChainContext);
-    }
-    else
-    {
-        LOG_DEBUG("[XeFG][Lifecycle] action = ref_pre_retire_handoff_skipped, reason = export_unavailable");
-    }
 
     const bool releaseSucceeded = ReleaseSwapchainLocked(hwnd, releaseFinalProxyOnce);
 
@@ -1872,6 +1915,8 @@ bool XeFG_Dx12::ReleaseSwapchainFromFinalProxyRelease(HWND hwnd, IUnknown* final
 
 bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy)
 {
+    // Any current REF-tracked XeFG presentation lifecycle must be detached before
+    // entering this function's FG mutex section.
     if (hwnd != _hwnd || _hwnd == NULL)
         return false;
 
