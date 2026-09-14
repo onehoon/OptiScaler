@@ -50,40 +50,65 @@ enum class RefHandoffDecision
     Blocked,
 };
 
-RefXeFGPreRetireFn FindREFXeFGPreRetire() noexcept
+struct RefPreRetireLookup
 {
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetCurrentProcessId());
+    RefXeFGPreRetireFn fn {};
+    bool scanSucceeded {};
+};
+
+RefPreRetireLookup FindREFXeFGPreRetire() noexcept
+{
+    HANDLE snapshot = INVALID_HANDLE_VALUE;
+    for (int attempt = 0; attempt < 8; ++attempt)
+    {
+        snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetCurrentProcessId());
+        if (snapshot != INVALID_HANDLE_VALUE)
+            break;
+
+        if (GetLastError() != ERROR_BAD_LENGTH)
+            return {};
+    }
+
     if (snapshot == INVALID_HANDLE_VALUE)
-        return nullptr;
+        return {};
 
     MODULEENTRY32W entry {};
     entry.dwSize = sizeof(entry);
 
-    RefXeFGPreRetireFn found = nullptr;
-    if (Module32FirstW(snapshot, &entry))
+    if (!Module32FirstW(snapshot, &entry))
     {
-        do
-        {
-            auto* proc = GetProcAddress(entry.hModule, "REFramework_XeFG_PreRetireSwapchainV1");
-            if (proc != nullptr)
-            {
-                found = reinterpret_cast<RefXeFGPreRetireFn>(proc);
-                break;
-            }
-        } while (Module32NextW(snapshot, &entry));
+        CloseHandle(snapshot);
+        return {};
     }
 
-    CloseHandle(snapshot);
-    return found;
+    for (;;)
+    {
+        if (auto* proc = GetProcAddress(entry.hModule, "REFramework_XeFG_PreRetireSwapchainV1"); proc != nullptr)
+        {
+            const auto found = reinterpret_cast<RefXeFGPreRetireFn>(proc);
+            CloseHandle(snapshot);
+            return { found, true };
+        }
+
+        if (Module32NextW(snapshot, &entry))
+            continue;
+
+        const bool enumerationComplete = GetLastError() == ERROR_NO_MORE_FILES;
+        CloseHandle(snapshot);
+        return { nullptr, enumerationComplete };
+    }
 }
 
 RefHandoffDecision PrepareREFForXeFGProxyRetire(IUnknown* publicProxy, void* context, HWND hwnd) noexcept
 {
-    const auto fn = FindREFXeFGPreRetire();
-    if (fn == nullptr)
+    const auto lookup = FindREFXeFGPreRetire();
+    if (!lookup.scanSucceeded)
+        return RefHandoffDecision::Blocked;
+
+    if (lookup.fn == nullptr)
         return RefHandoffDecision::NotAvailable;
 
-    const auto status = fn(publicProxy, context, hwnd);
+    const auto status = lookup.fn(publicProxy, context, hwnd);
     switch (status)
     {
     case static_cast<uint32_t>(RefXeFGProxyRetireStatus::SafeNotTracked):
