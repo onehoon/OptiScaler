@@ -1117,6 +1117,10 @@ bool XeFG_Dx12::Dispatch()
         LogXeFGResult("SetUiCompositionState", uiResult);
     }
 
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchHudlessStateStage, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), willDispatchFrame, _frameCount, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex), 1);
+
     if (XeFGProxy::SetNumInterpolatedFrames() != nullptr)
     {
         if (Config::Instance()->FGXeFGInterpolationCount.value_or_default() > _maxInterpolationCount)
@@ -1163,6 +1167,10 @@ bool XeFG_Dx12::Dispatch()
         Deactivate();
     }
 
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchHudlessStateStage, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), willDispatchFrame, _frameCount, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex), 2);
+
     if (!_haveHudless.has_value())
     {
         usingHudlessForTrace = IsUsingHudless(fIndex);
@@ -1186,9 +1194,17 @@ bool XeFG_Dx12::Dispatch()
             UpdateTarget();
             Deactivate();
 
+            XeFGTrace::Record(XeFGTrace::EventType::DispatchHudlessStateStage, reinterpret_cast<uint64_t>(_swapChain),
+                              reinterpret_cast<uint64_t>(_swapChainContext), willDispatchFrame, _frameCount, 0, 0, 0, 0,
+                              static_cast<uint32_t>(fIndex), 4);
+
             return false;
         }
     }
+
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchHudlessStateStage, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), willDispatchFrame, _frameCount, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex), 3);
 
     uint32_t hudlessStateFlags = 0;
     if (_haveHudless.has_value())

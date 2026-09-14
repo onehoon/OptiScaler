@@ -129,6 +129,7 @@ enum class EventType : uint32_t
     DispatchBeforeNoHudlessRead,
     DispatchAfterNoHudlessRead,
     FrameResourceReadyGeneration,
+    DispatchHudlessStateStage,
 };
 
 enum TraceFlagBits : uint32_t

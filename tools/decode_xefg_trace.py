@@ -62,7 +62,7 @@ EVENT_NAMES = {
     112: "DispatchEligibilitySnapshot", 113: "DispatchResourceReadySnapshot",
     114: "DispatchBeforeHudlessStateResolve", 115: "DispatchHudlessStateSnapshot",
     116: "DispatchBeforeNoHudlessRead", 117: "DispatchAfterNoHudlessRead",
-    118: "FrameResourceReadyGeneration",
+    118: "FrameResourceReadyGeneration", 119: "DispatchHudlessStateStage",
 }
 
 FLAG_NAMES = ((1, "skipResize"), (2, "skipResize1"), (4, "skipPresent"), (8, "skipPresent1"),
@@ -87,6 +87,13 @@ RESOURCE_READY_REASONS = {
 }
 
 RESOURCE_TYPES = {0: "depth", 1: "velocity", 2: "hudless_color", 3: "ui_color", 4: "distortion"}
+
+HUDLESS_STATE_STAGES = {
+    1: "ui_composition_check_returned",
+    2: "interpolation_toggle_handling_returned",
+    3: "have_hudless_evaluation_returned",
+    4: "hudless_state_transition_early_return",
+}
 
 
 @dataclass(frozen=True)
@@ -168,6 +175,8 @@ def event_detail(record: tuple[int, ...]) -> str:
     if event == 118:
         return (f"logical_frame={fence} resource_frame={aux_pointer} slot={aux0} "
                 f"resource_type={RESOURCE_TYPES.get(aux1, f'unknown({aux1})')}")
+    if event == 119:
+        return f"frame_count={fence} f_index={aux0} stage={HUDLESS_STATE_STAGES.get(aux1, f'unknown({aux1})')}"
     return ""
 
 
@@ -229,11 +238,12 @@ def self_test() -> None:
                                                  (12, 111, 0, 1, 3), (13, 112, 0, 1, 1),
                                                  (14, 113, 3, 2, 3), (15, 114, 0, 2, 0),
                                                  (16, 115, 0, 2, 13), (17, 116, 0, 2, 0),
-                                                 (18, 117, 0, 2, 1), (19, 118, 0, 2, 1)):
+                                                 (18, 117, 0, 2, 1), (19, 118, 0, 2, 1),
+                                                 (20, 119, 0, 2, 4)):
         RECORD.pack_into(records, (sequence % capacity) * RECORD.size, sequence, 100 + sequence, 0x10, 0x20, 0x30,
                          sequence, 42, event, 2, 99, result, 4, aux0, aux1)
     trace = parse_bytes(header + records)
-    assert [record[0] for record in trace.records] == list(range(1, 20))
+    assert [record[0] for record in trace.records] == list(range(1, 21))
     decoded = list(rows(trace))
     assert decoded[2]["result"] == -7
     assert decoded[3]["failure_source_event"] == "XeFGSetEnabledResult"
@@ -249,6 +259,7 @@ def self_test() -> None:
     assert "reason=velocity_key_absent" in decoded[13]["event_detail"]
     assert "using_hudless=1" in decoded[15]["event_detail"]
     assert "resource_type=velocity" in decoded[18]["event_detail"]
+    assert "stage=hudless_state_transition_early_return" in decoded[19]["event_detail"]
     print("self-test: PASS")
 
 
