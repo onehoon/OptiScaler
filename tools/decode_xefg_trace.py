@@ -58,10 +58,35 @@ EVENT_NAMES = {
     105: "XeFGDestroyFGContextEnter", 106: "XeFGDestroyFGContextExit",
     107: "XeFGDestroySwapchainContextEnter", 108: "XeFGDestroySwapchainContextExit",
     109: "XeFGStaleFinalProxyReleaseOnly",
+    110: "DispatchIndexResolveBegin", 111: "DispatchIndexResolveState",
+    112: "DispatchEligibilitySnapshot", 113: "DispatchResourceReadySnapshot",
+    114: "DispatchBeforeHudlessStateResolve", 115: "DispatchHudlessStateSnapshot",
+    116: "DispatchBeforeNoHudlessRead", 117: "DispatchAfterNoHudlessRead",
+    118: "FrameResourceReadyGeneration",
 }
 
 FLAG_NAMES = ((1, "skipResize"), (2, "skipResize1"), (4, "skipPresent"), (8, "skipPresent1"),
               (16, "xeFGActive"), (32, "xeFGPaused"))
+
+INDEX_RESOLVE_REASONS = {
+    1: "same_frame_no_dispatch",
+    2: "next_frame_sequential",
+    3: "latest_frame_frame_ahead",
+    4: "initial_dispatch",
+    5: "frame_ahead_kept_sequential",
+}
+
+ELIGIBILITY_REASONS = {0: "eligible", 1: "inactive", 2: "paused"}
+
+RESOURCE_READY_REASONS = {
+    0: "all_required_ready",
+    1: "depth_key_absent",
+    2: "depth_not_ready",
+    3: "velocity_key_absent",
+    4: "velocity_not_ready",
+}
+
+RESOURCE_TYPES = {0: "depth", 1: "velocity", 2: "hudless_color", 3: "ui_color", 4: "distortion"}
 
 
 @dataclass(frozen=True)
@@ -102,6 +127,50 @@ def flags_text(flags: int) -> str:
     return "|".join(names) if names else "-"
 
 
+def event_detail(record: tuple[int, ...]) -> str:
+    _sequence, _qpc, _swapchain, _obj, aux_pointer, fence, _thread, event, _owner, _owner_thread, result, flags, aux0, aux1 = record
+    if event == 110:
+        return f"frame_count={aux_pointer} last_dispatched_frame={_obj} frame_ahead_limit={fence}"
+    if event == 111:
+        f_index = -1 if aux0 == 0xFFFFFFFF else aux0
+        reason = INDEX_RESOLVE_REASONS.get(aux1, f"unknown({aux1})")
+        return f"frame_count={aux_pointer} last_dispatched_after={_obj} will_dispatch_frame={fence} f_index={f_index} reason={reason}"
+    if event == 112:
+        active = 1 if aux1 & 1 else 0
+        paused = 1 if aux1 & 2 else 0
+        reason = ELIGIBILITY_REASONS.get(result, f"unknown({result})")
+        return f"frame_count={aux_pointer} target_frame={fence} f_index={aux0} active={active} paused={paused} reason={reason}"
+    if event == 113:
+        depth_present = 1 if aux1 & 1 else 0
+        depth_ready = 1 if aux1 & 2 else 0
+        velocity_present = 1 if aux1 & 4 else 0
+        velocity_ready = 1 if aux1 & 8 else 0
+        reason = RESOURCE_READY_REASONS.get(result, f"unknown({result})")
+        return (f"frame_count={fence} will_dispatch_frame={aux_pointer} f_index={aux0} "
+                f"depth_present={depth_present} depth_ready={depth_ready} "
+                f"velocity_present={velocity_present} velocity_ready={velocity_ready} reason={reason}")
+    if event == 114:
+        return f"f_index={aux0}"
+    if event == 115:
+        have_hudless = 1 if aux1 & 1 else 0
+        have_hudless_value = 1 if aux1 & 2 else 0
+        using_hudless_evaluated = 1 if aux1 & 4 else 0
+        using_hudless = 1 if aux1 & 8 else 0
+        ui_composition = 1 if aux1 & 16 else 0
+        toggle_requested = 1 if aux1 & 32 else 0
+        return (f"frame_count={fence} f_index={aux0} have_hudless={have_hudless} "
+                f"have_hudless_value={have_hudless_value} using_hudless_evaluated={using_hudless_evaluated} "
+                f"using_hudless={using_hudless} ui_composition={ui_composition} toggle_requested={toggle_requested}")
+    if event == 116:
+        return f"frame_count={fence} will_dispatch_frame={aux_pointer} f_index={aux0}"
+    if event == 117:
+        return f"frame_count={fence} will_dispatch_frame={aux_pointer} f_index={aux0} no_hudless={aux1}"
+    if event == 118:
+        return (f"logical_frame={fence} resource_frame={aux_pointer} slot={aux0} "
+                f"resource_type={RESOURCE_TYPES.get(aux1, f'unknown({aux1})')}")
+    return ""
+
+
 def rows(trace: Trace):
     _magic, _version, _header_size, _record_size, _capacity, _pid, frequency, start, _latest = trace.header
     for record in trace.records:
@@ -124,6 +193,7 @@ def rows(trace: Trace):
             "aux1": aux1,
             "failure_source_event": EVENT_NAMES.get(aux0, "") if event == PRIMARY_FAILURE_EVENT else "",
             "e_abort": "yes" if event == PRIMARY_FAILURE_EVENT and aux1 == 1 else "",
+            "event_detail": event_detail(record),
         }
 
 
@@ -133,12 +203,13 @@ def write_output(trace: Trace, output_format: str) -> None:
               "mutex_owner", "mutex_owner_thread", "fence", "result", "flags", "aux0", "aux1",
               "failure_source_event", "e_abort"]
     if output_format == "csv":
-        writer = csv.DictWriter(sys.stdout, fieldnames=fields, lineterminator="\n")
+        writer = csv.DictWriter(sys.stdout, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
         writer.writeheader()
         writer.writerows(data)
         return
     if output_format == "tsv":
-        writer = csv.DictWriter(sys.stdout, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer = csv.DictWriter(sys.stdout, fieldnames=fields, delimiter="\t", lineterminator="\n",
+                                extrasaction="ignore")
         writer.writeheader()
         writer.writerows(data)
         return
@@ -147,17 +218,22 @@ def write_output(trace: Trace, output_format: str) -> None:
 
 
 def self_test() -> None:
-    capacity = 9
+    capacity = 20
     header = HEADER.pack(MAGIC, VERSION, HEADER.size, RECORD.size, capacity, 1, 1000, 100, capacity)
     records = bytearray(RECORD.size * capacity)
     for sequence, event, result, aux0, aux1 in ((1, 1, 0, 0, 0), (2, 16, 0, 0, 0),
-                                                (3, 43, -7, 0, 0), (4, 49, -2147467260, 43, 1),
-                                                (5, 67, 0, 2, 0), (6, 82, 0, 4, 0),
-                                                (7, 89, 0, 0, 1), (8, 107, 0, 0, 1), (9, 109, 0, 0, 0)):
+                                                 (3, 43, -7, 0, 0), (4, 49, -2147467260, 43, 1),
+                                                 (5, 67, 0, 2, 0), (6, 82, 0, 4, 0),
+                                                 (7, 89, 0, 0, 1), (8, 107, 0, 0, 1), (9, 109, 0, 0, 0),
+                                                 (10, 110, 0, 0, 0), (11, 111, 0, 2, 2),
+                                                 (12, 111, 0, 1, 3), (13, 112, 0, 1, 1),
+                                                 (14, 113, 3, 2, 3), (15, 114, 0, 2, 0),
+                                                 (16, 115, 0, 2, 13), (17, 116, 0, 2, 0),
+                                                 (18, 117, 0, 2, 1), (19, 118, 0, 2, 1)):
         RECORD.pack_into(records, (sequence % capacity) * RECORD.size, sequence, 100 + sequence, 0x10, 0x20, 0x30,
                          sequence, 42, event, 2, 99, result, 4, aux0, aux1)
     trace = parse_bytes(header + records)
-    assert [record[0] for record in trace.records] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert [record[0] for record in trace.records] == list(range(1, 20))
     decoded = list(rows(trace))
     assert decoded[2]["result"] == -7
     assert decoded[3]["failure_source_event"] == "XeFGSetEnabledResult"
@@ -167,6 +243,12 @@ def self_test() -> None:
     assert decoded[6]["event"] == "FSRFGActivateDecision"
     assert decoded[7]["event"] == "XeFGDestroySwapchainContextEnter"
     assert decoded[8]["event"] == "XeFGStaleFinalProxyReleaseOnly"
+    assert decoded[9]["event_detail"].startswith("frame_count=48")
+    assert "reason=next_frame_sequential" in decoded[10]["event_detail"]
+    assert "reason=latest_frame_frame_ahead" in decoded[11]["event_detail"]
+    assert "reason=velocity_key_absent" in decoded[13]["event_detail"]
+    assert "using_hudless=1" in decoded[15]["event_detail"]
+    assert "resource_type=velocity" in decoded[18]["event_detail"]
     print("self-test: PASS")
 
 

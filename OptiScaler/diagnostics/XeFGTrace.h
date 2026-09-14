@@ -120,6 +120,15 @@ enum class EventType : uint32_t
     XeFGDestroySwapchainContextEnter,
     XeFGDestroySwapchainContextExit,
     XeFGStaleFinalProxyReleaseOnly,
+    DispatchIndexResolveBegin,
+    DispatchIndexResolveState,
+    DispatchEligibilitySnapshot,
+    DispatchResourceReadySnapshot,
+    DispatchBeforeHudlessStateResolve,
+    DispatchHudlessStateSnapshot,
+    DispatchBeforeNoHudlessRead,
+    DispatchAfterNoHudlessRead,
+    FrameResourceReadyGeneration,
 };
 
 enum TraceFlagBits : uint32_t

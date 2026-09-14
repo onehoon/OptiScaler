@@ -132,13 +132,20 @@ bool IFGFeature::CheckForRealObject(std::string functionName, IUnknown* pObject,
     return false;
 }
 
-int IFGFeature::GetDispatchIndex(UINT64& willDispatchFrame)
+int IFGFeature::GetDispatchIndex(UINT64& willDispatchFrame, uint32_t* resolveReason)
 {
     LOG_DEBUG("_lastDispatchedFrame: {},  _frameCount: {}", _lastDispatchedFrame, _frameCount);
 
+    if (resolveReason != nullptr)
+        *resolveReason = 0;
+
     // We are in same frame
     if (_frameCount == _lastDispatchedFrame)
+    {
+        if (resolveReason != nullptr)
+            *resolveReason = static_cast<uint32_t>(DispatchIndexResolveReason::SameFrameNoDispatch);
         return -1;
+    }
 
     willDispatchFrame = _lastDispatchedFrame + 1; // By default render next one
 
@@ -151,8 +158,21 @@ int IFGFeature::GetDispatchIndex(UINT64& willDispatchFrame)
             HasResource(FG_ResourceType::UIColor, index) || HasResource(FG_ResourceType::HudlessColor, index))
         {
             willDispatchFrame = _frameCount; // Set dispatch frame as latest one
+
+            if (resolveReason != nullptr)
+            {
+                *resolveReason = static_cast<uint32_t>(_lastDispatchedFrame == 0
+                                                           ? DispatchIndexResolveReason::InitialDispatch
+                                                           : DispatchIndexResolveReason::LatestFrameFrameAhead);
+            }
         }
+        else if (resolveReason != nullptr)
+            *resolveReason = static_cast<uint32_t>(_lastDispatchedFrame == 0
+                                                       ? DispatchIndexResolveReason::InitialDispatch
+                                                       : DispatchIndexResolveReason::FrameAheadKeptSequential);
     }
+    else if (resolveReason != nullptr)
+        *resolveReason = static_cast<uint32_t>(DispatchIndexResolveReason::NextFrameSequential);
 
     _lastDispatchedFrame = willDispatchFrame;
     _lastFGFrame = State::Instance().fgLastFrame;

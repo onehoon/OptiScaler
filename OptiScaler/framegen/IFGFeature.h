@@ -44,6 +44,15 @@ enum class FG_ResourceValidity : uint32_t
     ValidityCOUNT
 };
 
+enum class DispatchIndexResolveReason : uint32_t
+{
+    SameFrameNoDispatch = 1,
+    NextFrameSequential,
+    LatestFrameFrameAhead,
+    InitialDispatch,
+    FrameAheadKeptSequential,
+};
+
 class IFGFeature
 {
   protected:
@@ -90,7 +99,7 @@ class IFGFeature
     IID streamlineRiid {};
 
     bool CheckForRealObject(std::string functionName, IUnknown* pObject, IUnknown** ppRealObject);
-    int GetDispatchIndex(UINT64& willDispatchFrame);
+    int GetDispatchIndex(UINT64& willDispatchFrame, uint32_t* resolveReason = nullptr);
     virtual void NewFrame() = 0;
 
   public:

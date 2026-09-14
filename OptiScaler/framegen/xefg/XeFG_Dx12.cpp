@@ -1019,29 +1019,77 @@ bool XeFG_Dx12::Dispatch()
                       static_cast<uint32_t>(_frameCount), static_cast<uint32_t>(_frameCount >> 32));
     LOG_FUNC();
 
+    const auto frameAheadLimit = Config::Instance()->FGAllowedFrameAhead.value_or_default();
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchIndexResolveBegin, reinterpret_cast<uint64_t>(_swapChain),
+                      _lastDispatchedFrame, _frameCount, frameAheadLimit);
     UINT64 willDispatchFrame = 0;
-    auto fIndex = GetDispatchIndex(willDispatchFrame);
+    uint32_t resolveReason = 0;
+    auto fIndex = GetDispatchIndex(willDispatchFrame, &resolveReason);
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchIndexResolveState, reinterpret_cast<uint64_t>(_swapChain),
+                      _lastDispatchedFrame, _frameCount, willDispatchFrame, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex), resolveReason);
     XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterIndexResolve, reinterpret_cast<uint64_t>(_swapChain),
                       reinterpret_cast<uint64_t>(_swapChainContext), 0, willDispatchFrame, 0, 0, 0, 0,
                       static_cast<uint32_t>(fIndex), static_cast<uint32_t>(willDispatchFrame));
     if (fIndex < 0)
         return false;
 
-    if (!IsActive() || IsPaused())
+    const bool isActive = IsActive();
+    const bool isPaused = isActive ? IsPaused() : false;
+    const auto eligibilityReason = !isActive ? 1 : isPaused ? 2 : 0;
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchEligibilitySnapshot,
+                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext), _frameCount,
+                      _targetFrame, 0, 0, eligibilityReason, 0, static_cast<uint32_t>(fIndex),
+                      (isActive ? 1u : 0u) | (isPaused ? 1u << 1 : 0u));
+    if (eligibilityReason != 0)
         return false;
 
     LOG_DEBUG("_frameCount: {}, willDispatchFrame: {}, fIndex: {}", _frameCount, willDispatchFrame, fIndex);
 
-    if (!_resourceReady[fIndex].contains(FG_ResourceType::Depth) ||
-        !_resourceReady[fIndex].at(FG_ResourceType::Depth) ||
-        !_resourceReady[fIndex].contains(FG_ResourceType::Velocity) ||
-        !_resourceReady[fIndex].at(FG_ResourceType::Velocity))
+    bool depthPresent = _resourceReady[fIndex].contains(FG_ResourceType::Depth);
+    bool depthReady = false;
+    bool velocityPresent = false;
+    bool velocityReady = false;
+    int32_t resourceReadyReason = 0;
+
+    if (!depthPresent)
+        resourceReadyReason = 1;
+    else
+    {
+        depthReady = _resourceReady[fIndex].at(FG_ResourceType::Depth);
+        if (!depthReady)
+            resourceReadyReason = 2;
+        else
+        {
+            velocityPresent = _resourceReady[fIndex].contains(FG_ResourceType::Velocity);
+            if (!velocityPresent)
+                resourceReadyReason = 3;
+            else
+            {
+                velocityReady = _resourceReady[fIndex].at(FG_ResourceType::Velocity);
+                if (!velocityReady)
+                    resourceReadyReason = 4;
+            }
+        }
+    }
+
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchResourceReadySnapshot,
+                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
+                      willDispatchFrame, _frameCount, 0, 0, resourceReadyReason, 0, static_cast<uint32_t>(fIndex),
+                      (depthPresent ? 1u : 0u) | (depthReady ? 1u << 1 : 0u) | (velocityPresent ? 1u << 2 : 0u) |
+                          (velocityReady ? 1u << 3 : 0u));
+    if (resourceReadyReason != 0)
     {
         LOG_WARN("Depth or Velocity is not ready, skipping");
         return false;
     }
 
     auto& state = State::Instance();
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeHudlessStateResolve,
+                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
+                      willDispatchFrame, _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+
+    std::optional<bool> usingHudlessForTrace;
 
     if (XeFGProxy::SetUiCompositionState() != nullptr &&
         Config::Instance()->FGXeFGUIComposition.value_or_default() != _uiComposition && IsUsingHudless(fIndex))
@@ -1118,11 +1166,13 @@ bool XeFG_Dx12::Dispatch()
 
     if (!_haveHudless.has_value())
     {
-        _haveHudless = IsUsingHudless(fIndex);
+        usingHudlessForTrace = IsUsingHudless(fIndex);
+        _haveHudless = usingHudlessForTrace;
     }
     else
     {
         auto usingHudless = IsUsingHudless(fIndex);
+        usingHudlessForTrace = usingHudless;
         static auto version = Version();
 
         // SDK version 2.1.1 fixed this
@@ -1141,7 +1191,33 @@ bool XeFG_Dx12::Dispatch()
         }
     }
 
-    if (!_noHudless[fIndex])
+    uint32_t hudlessStateFlags = 0;
+    if (_haveHudless.has_value())
+        hudlessStateFlags |= 1u;
+    if (_haveHudless.value_or(false))
+        hudlessStateFlags |= 1u << 1;
+    if (usingHudlessForTrace.has_value())
+        hudlessStateFlags |= 1u << 2;
+    if (usingHudlessForTrace.value_or(false))
+        hudlessStateFlags |= 1u << 3;
+    if (_uiComposition)
+        hudlessStateFlags |= 1u << 4;
+    if (state.WAR_xefgRequestFGToggle)
+        hudlessStateFlags |= 1u << 5;
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchHudlessStateSnapshot,
+                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
+                      usingHudlessForTrace.value_or(false) ? 1u : 0u, _frameCount, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex), hudlessStateFlags);
+
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeNoHudlessRead,
+                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
+                      willDispatchFrame, _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    const bool noHudless = _noHudless[fIndex];
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterNoHudlessRead,
+                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
+                      willDispatchFrame, _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex), noHudless ? 1u : 0u);
+
+    if (!noHudless)
     {
         XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeHudlessLookup, reinterpret_cast<uint64_t>(_swapChain),
                           reinterpret_cast<uint64_t>(_swapChainContext), 0, 0, 0, 0, 0, 0,
@@ -2042,6 +2118,10 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
         }
 
         SetResourceReady(type, fIndex);
+        XeFGTrace::Record(XeFGTrace::EventType::FrameResourceReadyGeneration,
+                          reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(fResource),
+                          _resourceFrame[type], _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex),
+                          static_cast<uint32_t>(type));
     }
 
     LOG_TRACE("_frameResources[{}][{}]: {:X}", fIndex, magic_enum::enum_name(type), (size_t) fResource->GetResource());
