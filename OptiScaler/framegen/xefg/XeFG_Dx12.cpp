@@ -186,6 +186,19 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
             LogXeFGResult("SetLoggingCallback", result);
         }
 
+        if (auto* oldXellContext = XeLLProxy::Context(); oldXellContext != nullptr)
+        {
+            if (!fakenvapi::clearModeAndContextIfMatches(oldXellContext, Mode::XeLL))
+            {
+                XeLLProxy::QuarantineContext();
+
+                LOG_ERROR("[XeLL][Lifecycle] action = recreate_blocked, "
+                          "reason = fakenvapi_unpublish_failed, context = {:X}",
+                          (size_t) oldXellContext);
+                return false;
+            }
+        }
+
         if (!XeLLProxy::CreateContext(device))
         {
             LOG_ERROR("[XeLL][Lifecycle] action = xefg_init_aborted, reason = xell_create_failed");
