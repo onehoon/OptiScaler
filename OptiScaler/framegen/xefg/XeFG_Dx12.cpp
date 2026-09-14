@@ -147,6 +147,14 @@ void XeFG_Dx12::xefgLogCallback(const char* message, xefg_swapchain_logging_leve
 
 bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 {
+    if (XeLLProxy::ContextRecreationBlocked())
+    {
+        LOG_ERROR("[XeLL][Lifecycle] action = xefg_create_blocked, "
+                  "reason = xell_context_quarantined, context = {:X}",
+                  (size_t) XeLLProxy::Context());
+        return false;
+    }
+
     if (XeFGProxy::Module() == nullptr && !XeFGProxy::InitXeFG())
     {
         LOG_ERROR("XeFG proxy can't find libxess_fg.dll!");
@@ -178,39 +186,41 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
             LogXeFGResult("SetLoggingCallback", result);
         }
 
-        // if (XeLLProxy::Context() == nullptr)
-        XeLLProxy::CreateContext(device);
-
-        if (XeLLProxy::Context() != nullptr)
+        if (!XeLLProxy::CreateContext(device))
         {
-            xell_sleep_params_t sleepParams = {};
-            sleepParams.bLowLatencyMode = true;
-            sleepParams.bLowLatencyBoost = false;
-            sleepParams.minimumIntervalUs = 0;
-
-            auto xellResult = XeLLProxy::SetSleepMode()(XeLLProxy::Context(), &sleepParams);
-            if (xellResult != XELL_RESULT_SUCCESS)
-            {
-                LOG_ERROR("SetSleepMode error: {} ({})", magic_enum::enum_name(xellResult), (UINT) xellResult);
-                return false;
-            }
-
-            auto fnaResult = fakenvapi::setModeAndContext(XeLLProxy::Context(), Mode::XeLL);
-            LOG_DEBUG("fakenvapi::setModeAndContext: {}", fnaResult);
-
-            result = XeFGProxy::SetLatencyReduction()(_swapChainContext, XeLLProxy::Context());
-
-            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
-            {
-                LOG_ERROR("SetLatencyReduction error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-                return false;
-            }
-        }
-        else
-        {
-            LOG_ERROR("Couldn't create XeLL");
+            LOG_ERROR("[XeLL][Lifecycle] action = xefg_init_aborted, reason = xell_create_failed");
             return false;
         }
+
+        auto* xellContext = XeLLProxy::Context();
+        if (xellContext == nullptr)
+        {
+            LOG_ERROR("[XeLL][Lifecycle] action = xefg_init_aborted, reason = xell_context_missing_after_success");
+            return false;
+        }
+
+        xell_sleep_params_t sleepParams = {};
+        sleepParams.bLowLatencyMode = true;
+        sleepParams.bLowLatencyBoost = false;
+        sleepParams.minimumIntervalUs = 0;
+
+        auto xellResult = XeLLProxy::SetSleepMode()(xellContext, &sleepParams);
+        if (xellResult != XELL_RESULT_SUCCESS)
+        {
+            LOG_ERROR("SetSleepMode error: {} ({})", magic_enum::enum_name(xellResult), (UINT) xellResult);
+            return false;
+        }
+
+        result = XeFGProxy::SetLatencyReduction()(_swapChainContext, xellContext);
+
+        if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        {
+            LOG_ERROR("SetLatencyReduction error: {} ({})", magic_enum::enum_name(result), (UINT) result);
+            return false;
+        }
+
+        auto fnaResult = fakenvapi::setModeAndContext(xellContext, Mode::XeLL);
+        LOG_DEBUG("fakenvapi::setModeAndContext: {}", fnaResult);
 
         createResult = true;
 
@@ -271,8 +281,21 @@ bool XeFG_Dx12::DestroySwapchainContext()
 {
     LOG_DEBUG("");
 
-    if (_swapChainContext == nullptr || State::Instance().isShuttingDown)
+    if (State::Instance().isShuttingDown)
         return true;
+
+    if (_swapChainContext == nullptr)
+    {
+        if (XeLLProxy::ContextRecreationBlocked())
+        {
+            LOG_ERROR("[XeLL][Lifecycle] action = destroy_incomplete, "
+                      "reason = quarantined_context_without_xefg, context = {:X}",
+                      (size_t) XeLLProxy::Context());
+            return false;
+        }
+
+        return true;
+    }
 
     auto context = _swapChainContext;
     _swapChainContext = nullptr;
@@ -305,8 +328,27 @@ bool XeFG_Dx12::DestroySwapchainContext()
         return false;
     }
 
-    if (XeLLProxy::Context() != nullptr)
-        XeLLProxy::DestroyXeLLContext();
+    const auto xellContext = XeLLProxy::Context();
+    if (xellContext != nullptr)
+    {
+        if (!fakenvapi::clearModeAndContextIfMatches(xellContext, Mode::XeLL))
+        {
+            XeLLProxy::QuarantineContext();
+
+            LOG_ERROR("[XeLL][Lifecycle] action = destroy_blocked, "
+                      "reason = fakenvapi_unpublish_failed, context = {:X}",
+                      (size_t) xellContext);
+            return false;
+        }
+
+        if (!XeLLProxy::DestroyXeLLContext())
+        {
+            LOG_ERROR("[XeLL][Lifecycle] action = xefg_teardown_incomplete, "
+                      "reason = xell_destroy_failed, context = {:X}",
+                      (size_t) XeLLProxy::Context());
+            return false;
+        }
+    }
 
     _swapchainRecreationBlocked = false;
     if (!Config::Instance()->FGPreserveSwapChain.value_or_default())
@@ -1867,7 +1909,7 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
     if (releaseFinalProxy)
         releaseFinalProxy();
 
-    if (!State::Instance().isShuttingDown && _swapChainContext != nullptr)
+    if (!State::Instance().isShuttingDown && (_swapChainContext != nullptr || XeLLProxy::ContextRecreationBlocked()))
     {
         if (!DestroySwapchainContext())
         {

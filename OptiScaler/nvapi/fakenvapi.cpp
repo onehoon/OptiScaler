@@ -149,11 +149,53 @@ bool fakenvapi::setModeAndContext(void* context, Mode mode)
 
         if (result != NVAPI_OK)
             LOG_ERROR("Can't set Low Latency context from fakenvapi");
+        else
+        {
+            _publishedLowLatencyContext = context;
+            _publishedLowLatencyMode = mode;
+        }
 
         return result == NVAPI_OK;
     }
 
     return false;
+}
+
+bool fakenvapi::clearModeAndContextIfMatches(void* expectedContext, Mode expectedMode)
+{
+    if (expectedContext == nullptr)
+        return true;
+
+    if (_publishedLowLatencyContext != expectedContext || _publishedLowLatencyMode != expectedMode)
+        return true;
+
+    if (Fake_GetLowLatencyCtx == nullptr || Fake_SetLowLatencyCtx == nullptr)
+        return false;
+
+    void* currentContext = nullptr;
+    Mode currentMode = Mode::LatencyFlex;
+    const auto getResult = Fake_GetLowLatencyCtx(&currentContext, &currentMode);
+    if (getResult != NVAPI_OK)
+        return false;
+
+    if (currentContext != expectedContext || currentMode != expectedMode)
+    {
+        _publishedLowLatencyContext = nullptr;
+        _publishedLowLatencyMode = Mode::LatencyFlex;
+        return true;
+    }
+
+    const auto clearResult = Fake_SetLowLatencyCtx(nullptr, expectedMode);
+    if (clearResult != NVAPI_OK)
+        return false;
+
+    if (_lowLatencyContext == expectedContext)
+        _lowLatencyContext = nullptr;
+
+    _lowLatencyMode = Mode::LatencyFlex;
+    _publishedLowLatencyContext = nullptr;
+    _publishedLowLatencyMode = Mode::LatencyFlex;
+    return true;
 }
 
 bool fakenvapi::loadForNvidia()
