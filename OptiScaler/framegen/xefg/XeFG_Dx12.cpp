@@ -1026,8 +1026,8 @@ bool XeFG_Dx12::Dispatch()
     uint32_t resolveReason = 0;
     auto fIndex = GetDispatchIndex(willDispatchFrame, &resolveReason);
     XeFGTrace::Record(XeFGTrace::EventType::DispatchIndexResolveState, reinterpret_cast<uint64_t>(_swapChain),
-                      _lastDispatchedFrame, _frameCount, willDispatchFrame, 0, 0, 0, 0,
-                      static_cast<uint32_t>(fIndex), resolveReason);
+                      _lastDispatchedFrame, _frameCount, willDispatchFrame, 0, 0, 0, 0, static_cast<uint32_t>(fIndex),
+                      resolveReason);
     XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterIndexResolve, reinterpret_cast<uint64_t>(_swapChain),
                       reinterpret_cast<uint64_t>(_swapChainContext), 0, willDispatchFrame, 0, 0, 0, 0,
                       static_cast<uint32_t>(fIndex), static_cast<uint32_t>(willDispatchFrame));
@@ -1037,10 +1037,9 @@ bool XeFG_Dx12::Dispatch()
     const bool isActive = IsActive();
     const bool isPaused = isActive ? IsPaused() : false;
     const auto eligibilityReason = !isActive ? 1 : isPaused ? 2 : 0;
-    XeFGTrace::Record(XeFGTrace::EventType::DispatchEligibilitySnapshot,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext), _frameCount,
-                      _targetFrame, 0, 0, eligibilityReason, 0, static_cast<uint32_t>(fIndex),
-                      (isActive ? 1u : 0u) | (isPaused ? 1u << 1 : 0u));
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchEligibilitySnapshot, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), _frameCount, _targetFrame, 0, 0, eligibilityReason,
+                      0, static_cast<uint32_t>(fIndex), (isActive ? 1u : 0u) | (isPaused ? 1u << 1 : 0u));
     if (eligibilityReason != 0)
         return false;
 
@@ -1073,9 +1072,9 @@ bool XeFG_Dx12::Dispatch()
         }
     }
 
-    XeFGTrace::Record(XeFGTrace::EventType::DispatchResourceReadySnapshot,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
-                      willDispatchFrame, _frameCount, 0, 0, resourceReadyReason, 0, static_cast<uint32_t>(fIndex),
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchResourceReadySnapshot, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), willDispatchFrame, _frameCount, 0, 0,
+                      resourceReadyReason, 0, static_cast<uint32_t>(fIndex),
                       (depthPresent ? 1u : 0u) | (depthReady ? 1u << 1 : 0u) | (velocityPresent ? 1u << 2 : 0u) |
                           (velocityReady ? 1u << 3 : 0u));
     if (resourceReadyReason != 0)
@@ -1085,9 +1084,9 @@ bool XeFG_Dx12::Dispatch()
     }
 
     auto& state = State::Instance();
-    XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeHudlessStateResolve,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
-                      willDispatchFrame, _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeHudlessStateResolve, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), willDispatchFrame, _frameCount, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex));
 
     std::optional<bool> usingHudlessForTrace;
 
@@ -1204,18 +1203,17 @@ bool XeFG_Dx12::Dispatch()
         hudlessStateFlags |= 1u << 4;
     if (state.WAR_xefgRequestFGToggle)
         hudlessStateFlags |= 1u << 5;
-    XeFGTrace::Record(XeFGTrace::EventType::DispatchHudlessStateSnapshot,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
-                      usingHudlessForTrace.value_or(false) ? 1u : 0u, _frameCount, 0, 0, 0, 0,
-                      static_cast<uint32_t>(fIndex), hudlessStateFlags);
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchHudlessStateSnapshot, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), usingHudlessForTrace.value_or(false) ? 1u : 0u,
+                      _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex), hudlessStateFlags);
 
-    XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeNoHudlessRead,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
-                      willDispatchFrame, _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex));
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchBeforeNoHudlessRead, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), willDispatchFrame, _frameCount, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex));
     const bool noHudless = _noHudless[fIndex];
-    XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterNoHudlessRead,
-                      reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(_swapChainContext),
-                      willDispatchFrame, _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex), noHudless ? 1u : 0u);
+    XeFGTrace::Record(XeFGTrace::EventType::DispatchAfterNoHudlessRead, reinterpret_cast<uint64_t>(_swapChain),
+                      reinterpret_cast<uint64_t>(_swapChainContext), willDispatchFrame, _frameCount, 0, 0, 0, 0,
+                      static_cast<uint32_t>(fIndex), noHudless ? 1u : 0u);
 
     if (!noHudless)
     {
@@ -2118,10 +2116,9 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
         }
 
         SetResourceReady(type, fIndex);
-        XeFGTrace::Record(XeFGTrace::EventType::FrameResourceReadyGeneration,
-                          reinterpret_cast<uint64_t>(_swapChain), reinterpret_cast<uint64_t>(fResource),
-                          _resourceFrame[type], _frameCount, 0, 0, 0, 0, static_cast<uint32_t>(fIndex),
-                          static_cast<uint32_t>(type));
+        XeFGTrace::Record(XeFGTrace::EventType::FrameResourceReadyGeneration, reinterpret_cast<uint64_t>(_swapChain),
+                          reinterpret_cast<uint64_t>(fResource), _resourceFrame[type], _frameCount, 0, 0, 0, 0,
+                          static_cast<uint32_t>(fIndex), static_cast<uint32_t>(type));
     }
 
     LOG_TRACE("_frameResources[{}][{}]: {:X}", fIndex, magic_enum::enum_name(type), (size_t) fResource->GetResource());

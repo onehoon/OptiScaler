@@ -167,9 +167,9 @@ int IFGFeature::GetDispatchIndex(UINT64& willDispatchFrame, uint32_t* resolveRea
             }
         }
         else if (resolveReason != nullptr)
-            *resolveReason = static_cast<uint32_t>(_lastDispatchedFrame == 0
-                                                       ? DispatchIndexResolveReason::InitialDispatch
-                                                       : DispatchIndexResolveReason::FrameAheadKeptSequential);
+            *resolveReason =
+                static_cast<uint32_t>(_lastDispatchedFrame == 0 ? DispatchIndexResolveReason::InitialDispatch
+                                                                : DispatchIndexResolveReason::FrameAheadKeptSequential);
     }
     else if (resolveReason != nullptr)
         *resolveReason = static_cast<uint32_t>(DispatchIndexResolveReason::NextFrameSequential);
