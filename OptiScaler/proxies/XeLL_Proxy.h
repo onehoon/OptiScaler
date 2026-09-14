@@ -73,6 +73,7 @@ class XeLLProxy
     inline static xell_version_t _xellVersion {};
 
     inline static xell_context_handle_t _xellContext = nullptr;
+    inline static bool _contextRecreationBlocked = false;
 
     static void xellLogCallback(const char* message, xell_logging_level_t loggingLevel)
     {
@@ -108,6 +109,12 @@ class XeLLProxy
 
     // Dx12
     inline static PFN_xellD3D12CreateContext _xellD3D12CreateContext = nullptr;
+
+    static bool HasRequiredContextExports() noexcept
+    {
+        return _dll != nullptr && _xellDestroyContext != nullptr && _xellSetSleepMode != nullptr &&
+               _xellD3D12CreateContext != nullptr;
+    }
 
     inline static xell_version_t GetDLLVersion(std::wstring dllPath)
     {
@@ -179,7 +186,7 @@ class XeLLProxy
     static bool InitXeLL()
     {
         if (_dll != nullptr)
-            return true;
+            return HookXeLL(_dll);
 
         HMODULE mainModule = nullptr;
 
@@ -223,7 +230,7 @@ class XeLLProxy
     static bool HookXeLL(HMODULE libxellModule)
     {
         // if dll already loaded
-        if (_dll != nullptr && _xellDestroyContext != nullptr)
+        if (_dll == libxellModule && HasRequiredContextExports())
             return true;
 
         spdlog::info("");
@@ -232,6 +239,15 @@ class XeLLProxy
             return false;
 
         _dll = libxellModule;
+        _xellDestroyContext = nullptr;
+        _xellSetSleepMode = nullptr;
+        _xellGetSleepMode = nullptr;
+        _xellSleep = nullptr;
+        _xellAddMarkerData = nullptr;
+        _xellGetVersion = nullptr;
+        _xellSetLoggingCallback = nullptr;
+        _xellGetFramesReports = nullptr;
+        _xellD3D12CreateContext = nullptr;
 
         {
             ScopedSkipDxgiLoadChecks skipDxgiLoadChecks {};
@@ -256,8 +272,8 @@ class XeLLProxy
             }
         }
 
-        bool loadResult = _xellDestroyContext != nullptr;
-        LOG_INFO("LoadResult: {}", loadResult);
+        bool loadResult = HasRequiredContextExports();
+        LOG_INFO("XeLL required context exports ready: {}", loadResult);
         return loadResult;
     }
 
@@ -296,28 +312,66 @@ class XeLLProxy
 
     static PFN_xellD3D12CreateContext D3D12CreateContext() { return _xellD3D12CreateContext; }
 
+    static bool ContextRecreationBlocked() noexcept { return _contextRecreationBlocked; }
+
+    static void QuarantineContext() noexcept
+    {
+        if (_xellContext != nullptr)
+            _contextRecreationBlocked = true;
+    }
+
     static bool DestroyXeLLContext()
     {
         LOG_DEBUG("");
 
-        if (_xellContext != nullptr)
+        if (_xellContext == nullptr)
+            return !_contextRecreationBlocked;
+
+        if (_xellDestroyContext == nullptr)
         {
-            auto context = _xellContext;
-            _xellContext = nullptr;
-            auto xellResult = _xellDestroyContext(context);
-
-            LOG_INFO("XeLL DestroyContext result: {} ({})", magic_enum::enum_name(xellResult), (UINT) xellResult);
-
-            // Set it back because context is not destroyed
-            if (xellResult != XELL_RESULT_SUCCESS)
-                _xellContext = context;
+            _contextRecreationBlocked = true;
+            LOG_ERROR("[XeLL][Lifecycle] action = destroy_blocked, reason = destroy_export_missing, context = {:X}",
+                      (size_t) _xellContext);
+            return false;
         }
 
+        auto context = _xellContext;
+        _xellContext = nullptr;
+
+        const auto xellResult = _xellDestroyContext(context);
+
+        LOG_INFO("[XeLL][Lifecycle] action = destroy_return, context = {:X}, result = {} ({})", (size_t) context,
+                 magic_enum::enum_name(xellResult), static_cast<int32_t>(xellResult));
+
+        if (xellResult != XELL_RESULT_SUCCESS)
+        {
+            _xellContext = context;
+            _contextRecreationBlocked = true;
+
+            LOG_ERROR("[XeLL][Lifecycle] action = destroy_failed, context = {:X}, result = {} ({}), retained = true",
+                      (size_t) context, magic_enum::enum_name(xellResult), static_cast<int32_t>(xellResult));
+            return false;
+        }
+
+        _contextRecreationBlocked = false;
+
+        LOG_INFO("[XeLL][Lifecycle] action = destroy_complete, context = {:X}", (size_t) context);
         return true;
     }
 
     static bool CreateContext(ID3D12Device* device)
     {
+        if (device == nullptr)
+            return false;
+
+        if (_contextRecreationBlocked)
+        {
+            LOG_ERROR(
+                "[XeLL][Lifecycle] action = create_blocked, reason = previous_retirement_uncertain, context = {:X}",
+                (size_t) _xellContext);
+            return false;
+        }
+
         if (!InitXeLL())
         {
             LOG_ERROR("XeLL proxy can't find libxell.dll!");
@@ -325,31 +379,46 @@ class XeLLProxy
         }
 
         if (_xellContext != nullptr)
-            DestroyXeLLContext();
+        {
+            if (!DestroyXeLLContext())
+            {
+                LOG_ERROR("[XeLL][Lifecycle] action = create_blocked, "
+                          "reason = previous_context_destroy_failed, context = {:X}",
+                          (size_t) _xellContext);
+                return false;
+            }
+        }
 
+        xell_context_handle_t newContext = nullptr;
         xell_result_t xellResult;
         {
 #ifndef DONT_USE_XMX
             ScopedSkipSpoofing skipSpoofing {};
 #endif // !DONT_USE_XMX
 
-            xellResult = _xellD3D12CreateContext(device, &_xellContext);
+            xellResult = _xellD3D12CreateContext(device, &newContext);
         }
 
-        if (xellResult != XELL_RESULT_SUCCESS)
+        if (xellResult != XELL_RESULT_SUCCESS || newContext == nullptr)
         {
-            LOG_ERROR("XeLL D3D12CreateContext error: {} ({})", magic_enum::enum_name(xellResult), (UINT) xellResult);
+            LOG_ERROR("[XeLL][Lifecycle] action = create_failed, result = {} ({}), candidate = {:X}",
+                      magic_enum::enum_name(xellResult), static_cast<int32_t>(xellResult), (size_t) newContext);
             return false;
         }
-        else
-        {
-            LOG_INFO("XeLL context created");
-        }
 
-        xellResult = SetLoggingCallback()(_xellContext, XELL_LOGGING_LEVEL_DEBUG, xellLogCallback);
-        if (xellResult != XELL_RESULT_SUCCESS)
+        _xellContext = newContext;
+        _contextRecreationBlocked = false;
+
+        LOG_INFO("[XeLL][Lifecycle] action = create_complete, context = {:X}", (size_t) _xellContext);
+
+        if (_xellSetLoggingCallback != nullptr)
         {
-            LOG_ERROR("XeLL SetLoggingCallback error: {} ({})", magic_enum::enum_name(xellResult), (UINT) xellResult);
+            xellResult = _xellSetLoggingCallback(_xellContext, XELL_LOGGING_LEVEL_DEBUG, xellLogCallback);
+            if (xellResult != XELL_RESULT_SUCCESS)
+            {
+                LOG_WARN("XeLL SetLoggingCallback failed: {} ({})", magic_enum::enum_name(xellResult),
+                         static_cast<int32_t>(xellResult));
+            }
         }
 
         return true;
