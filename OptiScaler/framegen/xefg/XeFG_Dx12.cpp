@@ -557,6 +557,13 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     if (!CheckForRealObject(__FUNCTION__, cmdQueue, (IUnknown**) &realQueue))
         realQueue = cmdQueue;
 
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> queueCandidate;
+    queueCandidate = realQueue;
+    if (queueCandidate == nullptr)
+        return AbortSwapchainInitialization("ResolveCommandQueue");
+
+    LOG_DEBUG("[XeFG][QueueLifecycle] action = candidate_acquired, queue = {:X}", (size_t) queueCandidate.Get());
+
     Microsoft::WRL::ComPtr<IDXGIFactory2> factory12;
     if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
         return AbortSwapchainInitialization("QueryInterface(IDXGIFactory2)");
@@ -650,7 +657,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 #endif // !DONT_USE_XMX
 
     xefg_swapchain_result_t result;
-    result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue,
+    result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, queueCandidate.Get(),
                                                      factory12.Get(), &params);
 
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
@@ -671,7 +678,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     }
 
     *swapChain = queriedSwapChain;
-    _gameCommandQueue = realQueue;
+    CommitGameCommandQueue(queueCandidate.Get());
     _swapChain = *swapChain;
     _hwnd = hwnd;
 
@@ -766,6 +773,13 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     if (!CheckForRealObject(__FUNCTION__, cmdQueue, (IUnknown**) &realQueue))
         realQueue = cmdQueue;
 
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> queueCandidate;
+    queueCandidate = realQueue;
+    if (queueCandidate == nullptr)
+        return AbortSwapchainInitialization("ResolveCommandQueue");
+
+    LOG_DEBUG("[XeFG][QueueLifecycle] action = candidate_acquired, queue = {:X}", (size_t) queueCandidate.Get());
+
     Microsoft::WRL::ComPtr<IDXGIFactory2> factory12;
     if (realFactory->QueryInterface(IID_PPV_ARGS(&factory12)) != S_OK)
         return AbortSwapchainInitialization("QueryInterface(IDXGIFactory2)");
@@ -825,8 +839,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 #endif // !DONT_USE_XMX
 
     xefg_swapchain_result_t result;
-    result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, desc, pFullscreenDesc, realQueue,
-                                                     factory12.Get(), &params);
+    result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, desc, pFullscreenDesc,
+                                                     queueCandidate.Get(), factory12.Get(), &params);
 
     State::Instance().skipSpoofing = false;
 
@@ -848,7 +862,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     }
 
     *swapChain = queriedSwapChain;
-    _gameCommandQueue = realQueue;
+    CommitGameCommandQueue(queueCandidate.Get());
     _swapChain = *swapChain;
     _hwnd = hwnd;
 
@@ -1839,7 +1853,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
     return true;
 }
 
-void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
+void XeFG_Dx12::CommitGameCommandQueue(ID3D12CommandQueue* queue)
+{
+    _ownedGameCommandQueue = queue;
+    _gameCommandQueue = _ownedGameCommandQueue.Get();
+
+    LOG_DEBUG("[XeFG][QueueLifecycle] action = committed, queue = {:X}", (size_t) _gameCommandQueue);
+}
+
+void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { CommitGameCommandQueue(queue); }
 
 bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
 {
@@ -1992,6 +2014,10 @@ bool XeFG_Dx12::ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseF
 
     _swapChainContext = nullptr;
     ReleaseObjects();
+
+    _gameCommandQueue = nullptr;
+    _ownedGameCommandQueue.Reset();
+    LOG_DEBUG("[XeFG][QueueLifecycle] action = retired");
 
     if (useConfiguredMutex)
     {

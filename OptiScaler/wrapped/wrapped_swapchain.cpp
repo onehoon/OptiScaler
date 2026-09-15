@@ -9,6 +9,7 @@
 #include <nvapi/fakenvapi.h>
 #include <hooks/Reflex_Hooks.h>
 #include <hooks/D3D12_Hooks.h>
+#include <hooks/FG_Hooks.h>
 
 #include <menu/menu_overlay_dx.h>
 
@@ -627,6 +628,7 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
         if (releaseCompleted && state.currentFGSwapchain == nullptr &&
             state.currentFGSwapchainGeneration.load(std::memory_order_acquire) == wrapperGeneration)
         {
+            FGHooks::RetireQueueGeneration(wrapperGeneration);
             state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
         }
 

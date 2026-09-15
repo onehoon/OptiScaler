@@ -19,12 +19,14 @@
 #include <detours/detours.h>
 
 #include <d3d12.h>
+#include <wrl/client.h>
 
 static ID3D12Fence* resizeFence = nullptr;
 static UINT64 resizeFenceValue = 0;
 static HANDLE resizeFenceEvent = nullptr;
 static IUnknown* oldSwapChain = nullptr;
-static ID3D12CommandQueue* currentCommandQueue = nullptr;
+static Microsoft::WRL::ComPtr<ID3D12CommandQueue> currentCommandQueue;
+static uint64_t currentCommandQueueGeneration = 0;
 static bool _forcedHdrForXeFG = false;
 static HANDLE _semaphore = nullptr;
 
@@ -38,14 +40,54 @@ static void PauseFG(IFGFeature_Dx12* fg)
     }
 }
 
-static void WaitForGPUIdle()
+static void ResetResizeSyncIfGeneration(uint64_t generation)
 {
-    if (currentCommandQueue != nullptr && resizeFence != nullptr && resizeFenceEvent != nullptr)
+    if (generation == 0 || currentCommandQueueGeneration != generation)
+        return;
+
+    currentCommandQueue.Reset();
+
+    if (resizeFence != nullptr)
+    {
+        resizeFence->Release();
+        resizeFence = nullptr;
+    }
+
+    if (resizeFenceEvent != nullptr)
+    {
+        CloseHandle(resizeFenceEvent);
+        resizeFenceEvent = nullptr;
+    }
+
+    resizeFenceValue = 0;
+    currentCommandQueueGeneration = 0;
+    LOG_DEBUG("[FG][QueueLifecycle] action = clear_generation, generation = {}", generation);
+}
+
+void FGHooks::RetireQueueGeneration(uint64_t generation) { ResetResizeSyncIfGeneration(generation); }
+
+static void PublishResizeSync(ID3D12CommandQueue* queue, uint64_t generation, uint64_t retiredGeneration)
+{
+    ResetResizeSyncIfGeneration(retiredGeneration);
+
+    if (State::Instance().currentD3D12Device != nullptr)
+    {
+        State::Instance().currentD3D12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&resizeFence));
+        resizeFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    }
+
+    currentCommandQueue = queue;
+    currentCommandQueueGeneration = generation;
+}
+
+static void WaitForGPUIdle(ID3D12CommandQueue* queue)
+{
+    if (queue != nullptr && resizeFence != nullptr && resizeFenceEvent != nullptr)
     {
         LOG_DEBUG("Waiting for GPU to finish before resizing buffers");
 
         resizeFenceValue++;
-        currentCommandQueue->Signal(resizeFence, resizeFenceValue);
+        queue->Signal(resizeFence, resizeFenceValue);
 
         if (resizeFence->GetCompletedValue() < resizeFenceValue)
         {
@@ -55,6 +97,19 @@ static void WaitForGPUIdle()
             LOG_DEBUG("WaitForSingleObject result: {:X}", waitResult);
         }
     }
+}
+
+static void ClearRetiredGenerationIfNoLongerCurrent(State& state, IUnknown* previousSwapChain,
+                                                    uint64_t previousGeneration)
+{
+    if (previousSwapChain == nullptr || state.currentFGSwapchain != nullptr || previousGeneration == 0 ||
+        state.currentFGSwapchainGeneration.load(std::memory_order_acquire) != previousGeneration)
+        return;
+
+    ResetResizeSyncIfGeneration(previousGeneration);
+    state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
+    LOG_DEBUG("[FG][QueueLifecycle] action = clear_generation, generation = {}, reason = create_failed_after_retire",
+              previousGeneration);
 }
 
 static bool CheckForFGStatus()
@@ -98,16 +153,13 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
         return E_NOINTERFACE;
     }
 
-    // Check if it's Dx12
-    ID3D12CommandQueue* cq = nullptr;
-    if (pDevice->QueryInterface(IID_PPV_ARGS(&cq)) != S_OK)
+    // Check if it's Dx12. Keep the incoming queue local until the lifecycle commits.
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> candidateQueue;
+    if (pDevice->QueryInterface(IID_PPV_ARGS(&candidateQueue)) != S_OK)
     {
         LOG_ERROR("FG Feature requires D3D12 Command Queue!");
         return E_INVALIDARG;
     }
-
-    currentCommandQueue = cq;
-    cq->Release();
 
     if (State::Instance().currentFG == nullptr)
     {
@@ -127,6 +179,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
     auto fg = state.currentFG;
     auto* wrappedBeforeCreate = state.currentWrappedSwapchain;
     IUnknown* previousFGSwapchain = state.currentFGSwapchain;
+    const auto previousGeneration = state.currentFGSwapchainGeneration.load(std::memory_order_acquire);
     const bool reusedExistingLifecycle = previousFGSwapchain != nullptr &&
                                          Config::Instance()->FGPreserveSwapChain.value_or_default() && fg != nullptr &&
                                          fg->Hwnd() == pDesc->OutputWindow;
@@ -159,13 +212,19 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
         {
             LOG_WARN("Looks like game is creating new swapchain, without releasing old one!");
 
-            WaitForGPUIdle();
+            auto* oldLifecycleQueue = currentCommandQueue.Get();
+            if (State::Instance().activeFgOutput == FGOutput::XeFG && fg != nullptr)
+                oldLifecycleQueue = fg->GetCommandQueue();
+
+            LOG_DEBUG("[FG][QueueLifecycle] action = wait_old_generation, generation = {}, queue = {:X}",
+                      previousGeneration, (size_t) oldLifecycleQueue);
+            WaitForGPUIdle(oldLifecycleQueue);
         }
 
         if (oldSwapChain == previousFGSwapchain)
             oldSwapChain = nullptr;
 
-        scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
+        scResult = fg->CreateSwapchain(pFactory, candidateQueue.Get(), pDesc, ppSwapChain, true);
 
         if (Config::Instance()->FGDontUseSwapchainBuffers.value_or_default())
             State::Instance().skipHeapCapture = false;
@@ -178,24 +237,6 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
             oldSwapChain = previousFGSwapchain;
         else if (oldSwapChain == newFGSwapchain)
             oldSwapChain = nullptr;
-
-        if (State::Instance().currentD3D12Device != nullptr)
-        {
-            if (resizeFence != nullptr)
-            {
-                resizeFence->Release();
-                resizeFence = nullptr;
-            }
-
-            if (resizeFenceEvent != nullptr)
-            {
-                CloseHandle(resizeFenceEvent);
-                resizeFenceEvent = nullptr;
-            }
-
-            State::Instance().currentD3D12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&resizeFence));
-            resizeFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        }
 
         _hwnd = pDesc->OutputWindow;
         if (!reusedExistingLifecycle && newFGSwapchain != nullptr)
@@ -215,6 +256,8 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
                     wrapped->Release();
                 }
             }
+
+            PublishResizeSync(candidateQueue.Get(), generation, previousGeneration);
         }
 
         state.currentFGSwapchain = *ppSwapChain;
@@ -225,6 +268,8 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
         return S_OK;
     }
+
+    ClearRetiredGenerationIfNoLongerCurrent(state, previousFGSwapchain, previousGeneration);
 
     return E_INVALIDARG;
 }
@@ -239,16 +284,13 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
         return E_NOINTERFACE;
     }
 
-    // Check if it's Dx12
-    ID3D12CommandQueue* cq = nullptr;
-    if (pDevice->QueryInterface(IID_PPV_ARGS(&cq)) != S_OK)
+    // Check if it's Dx12. Keep the incoming queue local until the lifecycle commits.
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> candidateQueue;
+    if (pDevice->QueryInterface(IID_PPV_ARGS(&candidateQueue)) != S_OK)
     {
         LOG_ERROR("FG Feature requires D3D12 Command Queue!");
         return E_INVALIDARG;
     }
-
-    currentCommandQueue = cq;
-    cq->Release();
 
     if (State::Instance().currentFG == nullptr)
     {
@@ -268,6 +310,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
     auto fg = state.currentFG;
     auto* wrappedBeforeCreate = state.currentWrappedSwapchain;
     IUnknown* previousFGSwapchain = state.currentFGSwapchain;
+    const auto previousGeneration = state.currentFGSwapchainGeneration.load(std::memory_order_acquire);
     const bool reusedExistingLifecycle = previousFGSwapchain != nullptr &&
                                          Config::Instance()->FGPreserveSwapChain.value_or_default() && fg != nullptr &&
                                          fg->Hwnd() == hWnd;
@@ -300,13 +343,20 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
         {
             LOG_WARN("Looks like game is creating new swapchain, without releasing old one!");
 
-            WaitForGPUIdle();
+            auto* oldLifecycleQueue = currentCommandQueue.Get();
+            if (State::Instance().activeFgOutput == FGOutput::XeFG && fg != nullptr)
+                oldLifecycleQueue = fg->GetCommandQueue();
+
+            LOG_DEBUG("[FG][QueueLifecycle] action = wait_old_generation, generation = {}, queue = {:X}",
+                      previousGeneration, (size_t) oldLifecycleQueue);
+            WaitForGPUIdle(oldLifecycleQueue);
         }
 
         if (oldSwapChain == previousFGSwapchain)
             oldSwapChain = nullptr;
 
-        scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
+        scResult =
+            fg->CreateSwapchain1(pFactory, candidateQueue.Get(), hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
 
         if (Config::Instance()->FGDontUseSwapchainBuffers.value_or_default())
             State::Instance().skipHeapCapture = false;
@@ -319,24 +369,6 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
             oldSwapChain = previousFGSwapchain;
         else if (oldSwapChain == newFGSwapchain)
             oldSwapChain = nullptr;
-
-        if (State::Instance().currentD3D12Device != nullptr)
-        {
-            if (resizeFence != nullptr)
-            {
-                resizeFence->Release();
-                resizeFence = nullptr;
-            }
-
-            if (resizeFenceEvent != nullptr)
-            {
-                CloseHandle(resizeFenceEvent);
-                resizeFenceEvent = nullptr;
-            }
-
-            State::Instance().currentD3D12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&resizeFence));
-            resizeFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        }
 
         _hwnd = hWnd;
         if (!reusedExistingLifecycle && newFGSwapchain != nullptr)
@@ -356,6 +388,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
                     wrapped->Release();
                 }
             }
+
+            PublishResizeSync(candidateQueue.Get(), generation, previousGeneration);
         }
 
         state.currentFGSwapchain = *ppSwapChain;
@@ -365,6 +399,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
 
         return S_OK;
     }
+
+    ClearRetiredGenerationIfNoLongerCurrent(state, previousFGSwapchain, previousGeneration);
 
     return E_INVALIDARG;
 }
@@ -610,7 +646,7 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
     PauseFG(fg);
 
     // Wait for GPU to finish rendering before resizing buffers to prevent issues with unreleased backbuffers
-    WaitForGPUIdle();
+    WaitForGPUIdle(currentCommandQueue.Get());
 
     // Prevent mode switch when using borderless workaround for XeFG
     if (State::Instance().activeFgOutput == FGOutput::XeFG)
@@ -865,7 +901,7 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT 
     PauseFG(fg);
 
     // Wait for GPU to finish rendering before resizing buffers to prevent issues with unreleased backbuffers
-    WaitForGPUIdle();
+    WaitForGPUIdle(currentCommandQueue.Get());
 
     // Prevent mode switch when using borderless workaround for XeFG
     if (State::Instance().activeFgOutput == FGOutput::XeFG)
@@ -1176,9 +1212,10 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
         LOG_DEBUG("flags: {:X}, Frametime: {}", Flags, ftDelta);
     }
 
-    if (willPresent && currentCommandQueue != nullptr)
+    auto* queue = currentCommandQueue.Get();
+    if (willPresent && queue != nullptr)
     {
-        UpscalerTimeDx12::ReadUpscalingTime(State::Instance().currentCommandQueue);
+        UpscalerTimeDx12::ReadUpscalingTime(queue);
     }
 
     auto fg = State::Instance().currentFG;
@@ -1326,7 +1363,13 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
         {
             LOG_DEBUG("");
 
-            WaitForGPUIdle();
+            auto* oldLifecycleQueue = currentCommandQueue.Get();
+            if (state.activeFgOutput == FGOutput::XeFG && state.currentFG != nullptr)
+                oldLifecycleQueue = state.currentFG->GetCommandQueue();
+
+            LOG_DEBUG("[FG][QueueLifecycle] action = wait_old_generation, generation = {}, queue = {:X}",
+                      generationBeforeRelease, (size_t) oldLifecycleQueue);
+            WaitForGPUIdle(oldLifecycleQueue);
 
             // To prevent deadlock when FG release the swapchain
             skipReleaseChecks = true;
@@ -1363,6 +1406,7 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
             if (state.currentFGSwapchain == nullptr &&
                 state.currentFGSwapchainGeneration.load(std::memory_order_acquire) == generationBeforeRelease)
             {
+                ResetResizeSyncIfGeneration(generationBeforeRelease);
                 state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
             }
 

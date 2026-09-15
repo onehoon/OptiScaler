@@ -4,6 +4,7 @@
 
 #include <Util.h>
 #include <Config.h>
+#include <hooks/FG_Hooks.h>
 
 #include <magic_enum.hpp>
 
@@ -587,6 +588,7 @@ ffxReturnCode_t ffxDestroyContext_Dx12FG(ffxContext* context, const ffxAllocatio
             if (state.currentFGSwapchain == nullptr &&
                 state.currentFGSwapchainGeneration.load(std::memory_order_acquire) == generationBeforeRelease)
             {
+                FGHooks::RetireQueueGeneration(generationBeforeRelease);
                 state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
             }
         }
