@@ -1873,8 +1873,24 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
         return false;
     }
 
-    if (!PrepareREFForSwapchainRetire(State::Instance().currentFGSwapchain, hwnd, "explicit_release"))
+    auto& state = State::Instance();
+
+    LOG_DEBUG("[XeFG][ShutdownOwnership] action = evaluate, trigger = explicit_release, "
+              "shutting_down = {}, proxy = {:X}, context = {:X}, thread = {}",
+              state.isShuttingDown, (size_t) state.currentFGSwapchain, (size_t) _swapChainContext,
+              GetCurrentThreadId());
+
+    if (state.isShuttingDown)
+    {
+        LOG_INFO("[XeFG][ShutdownOwnership] action = ref_pre_retire_skipped, "
+                 "trigger = explicit_release, reason = process_shutdown, "
+                 "proxy = {:X}, context = {:X}",
+                 (size_t) state.currentFGSwapchain, (size_t) _swapChainContext);
+    }
+    else if (!PrepareREFForSwapchainRetire(state.currentFGSwapchain, hwnd, "explicit_release"))
+    {
         return false;
+    }
 
     return ReleaseSwapchainLocked(hwnd);
 }
