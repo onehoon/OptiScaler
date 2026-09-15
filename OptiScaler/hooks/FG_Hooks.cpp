@@ -64,6 +64,8 @@ static void ResetResizeSyncIfGeneration(uint64_t generation)
     LOG_DEBUG("[FG][QueueLifecycle] action = clear_generation, generation = {}", generation);
 }
 
+void FGHooks::RetireQueueGeneration(uint64_t generation) { ResetResizeSyncIfGeneration(generation); }
+
 static void PublishResizeSync(ID3D12CommandQueue* queue, uint64_t generation, uint64_t retiredGeneration)
 {
     ResetResizeSyncIfGeneration(retiredGeneration);

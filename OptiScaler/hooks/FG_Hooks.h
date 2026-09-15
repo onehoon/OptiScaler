@@ -15,6 +15,8 @@ class FGHooks
                                           DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
                                           IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain);
 
+    static void RetireQueueGeneration(uint64_t generation);
+
   private:
     using PFN_Present = rewrite_signature<decltype(&IDXGISwapChain::Present)>::type;
     using PFN_Present1 = rewrite_signature<decltype(&IDXGISwapChain1::Present1)>::type;
