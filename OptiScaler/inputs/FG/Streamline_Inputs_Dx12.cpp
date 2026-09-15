@@ -6,7 +6,7 @@
 
 namespace
 {
-constexpr uint32_t kStreamlineInputMutexOwner = 3;
+constexpr uint32_t kFrameTransactionMutexOwner = 2;
 
 class ScopedStreamlineFGTransaction
 {
@@ -27,14 +27,14 @@ class ScopedStreamlineFGTransaction
         if (_fg->Mutex.isOwnedByCurrentThread())
             return;
 
-        _fg->Mutex.lock(kStreamlineInputMutexOwner);
+        _fg->Mutex.lock(kFrameTransactionMutexOwner);
         _locked = true;
     }
 
     ~ScopedStreamlineFGTransaction()
     {
         if (_locked)
-            _fg->Mutex.unlockThis(kStreamlineInputMutexOwner);
+            _fg->Mutex.unlockThis(kFrameTransactionMutexOwner);
     }
 
     ScopedStreamlineFGTransaction(const ScopedStreamlineFGTransaction&) = delete;
