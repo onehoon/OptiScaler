@@ -557,6 +557,14 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
 
     LOG_TRACE("Count: {}, caller: {}", _refcount, Util::WhoIsTheCaller(_ReturnAddress()));
 
+    if (ret == 0 && _finalReleaseInProgress.load(std::memory_order_acquire))
+    {
+        LOG_DEBUG("[DXGI][WrapperLifecycle] action = reentrant_final_release_consumed, "
+                  "wrapper = {:X}, thread = {}",
+                  (size_t) this, GetCurrentThreadId());
+        return ret;
+    }
+
     // Preserve swapchain when SL releasing it
     if (ret == 0 && State::Instance().activeFgOutput != FGOutput::NoFG &&
         State::Instance().activeFgOutput != FGOutput::Nukems &&
@@ -569,37 +577,70 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
 
     if (ret == 0)
     {
+        bool expected = false;
+        if (!_finalReleaseInProgress.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+                                                             std::memory_order_acquire))
+        {
+            LOG_DEBUG("[DXGI][WrapperLifecycle] action = reentrant_final_release_consumed, "
+                      "wrapper = {:X}, thread = {}",
+                      (size_t) this, GetCurrentThreadId());
+            return ret;
+        }
+
+        LOG_DEBUG("[DXGI][WrapperLifecycle] action = final_release_begin, wrapper = {:X}, thread = {}", (size_t) this,
+                  GetCurrentThreadId());
+
+        IFGFeature_Dx12* fg = nullptr;
+        IUnknown* fgProxyBeforeRelease = nullptr;
+        IDXGISwapChain* real = nullptr;
+        uint64_t wrapperGeneration = 0;
+        uint64_t currentGeneration = 0;
+        bool wasCurrentWrapped = false;
+        bool canReleaseCurrentFgLifecycle = false;
+
+        const auto snapshotFinalReleaseState = [&]()
+        {
+            auto& state = State::Instance();
+            wasCurrentWrapped = state.currentWrappedSwapchain == this;
+            wrapperGeneration = _fgGenerationAtCreation;
+            currentGeneration = state.currentFGSwapchainGeneration.load(std::memory_order_acquire);
+
+            MenuOverlayDx::CleanupRenderTarget(true, _handle);
+
+            if (state.currentSwapchain == this)
+                state.currentSwapchain = nullptr;
+
+            if (state.currentWrappedSwapchain == this)
+                state.currentWrappedSwapchain = nullptr;
+
+            real = std::exchange(_real, nullptr);
+
+            if (state.currentRealSwapchain == real)
+                state.currentRealSwapchain = nullptr;
+
+            fg = state.currentFG;
+            fgProxyBeforeRelease = state.currentFGSwapchain;
+            canReleaseCurrentFgLifecycle = wasCurrentWrapped && wrapperGeneration != 0 &&
+                                           wrapperGeneration == currentGeneration && fg != nullptr &&
+                                           state.currentFGSwapchain != nullptr && fg->Hwnd() == _handle;
+        };
+
 #ifdef USE_LOCAL_MUTEX
-        OwnedLockGuard lock(_localMutex, 999);
+        {
+            OwnedLockGuard lock(_localMutex, 999);
+            snapshotFinalReleaseState();
+        }
+#else
+        snapshotFinalReleaseState();
 #endif
 
-        auto& state = State::Instance();
-        const bool wasCurrentWrapped = state.currentWrappedSwapchain == this;
-        const auto wrapperGeneration = _fgGenerationAtCreation;
-        const auto currentGeneration = state.currentFGSwapchainGeneration.load(std::memory_order_acquire);
-
-        MenuOverlayDx::CleanupRenderTarget(true, _handle);
-
-        if (state.currentSwapchain == this)
-            state.currentSwapchain = nullptr;
-
-        if (state.currentWrappedSwapchain == this)
-            state.currentWrappedSwapchain = nullptr;
-
-        auto* real = std::exchange(_real, nullptr);
-
-        if (state.currentRealSwapchain == real)
-            state.currentRealSwapchain = nullptr;
-
-        auto fg = state.currentFG;
         bool releaseCompleted = false;
-        auto* fgProxyBeforeRelease = state.currentFGSwapchain;
-        const bool canReleaseCurrentFgLifecycle = wasCurrentWrapped && wrapperGeneration != 0 &&
-                                                  wrapperGeneration == currentGeneration && fg != nullptr &&
-                                                  state.currentFGSwapchain != nullptr && fg->Hwnd() == _handle;
-
         if (canReleaseCurrentFgLifecycle)
         {
+            LOG_DEBUG("[DXGI][WrapperLifecycle] action = final_release_fg_retire_begin, "
+                      "wrapper = {:X}, wrapper_generation = {}, current_generation = {}, thread = {}",
+                      (size_t) this, wrapperGeneration, currentGeneration, GetCurrentThreadId());
+
             if (fg->Mutex.getOwner() == 1)
             {
                 LOG_WARN("[XeFG][Lifecycle] action = wrapped_release_deferred, "
@@ -614,27 +655,46 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
                               "reason = release_not_completed",
                               wrapperGeneration);
             }
-        }
-        else if (fg != nullptr && state.currentFGSwapchain != nullptr)
-        {
-            LOG_INFO("[FG][Lifecycle] action = stale_wrapped_release_skipped, wrapper = {:X}, "
-                     "wrapper_generation = {}, current_generation = {}, was_current_wrapped = {}, hwnd = {:X}",
-                     (size_t) this, wrapperGeneration, currentGeneration, wasCurrentWrapped, (size_t) _handle);
+
+            LOG_DEBUG("[DXGI][WrapperLifecycle] action = final_release_fg_retire_complete, "
+                      "wrapper = {:X}, wrapper_generation = {}, releaseCompleted = {}, thread = {}",
+                      (size_t) this, wrapperGeneration, releaseCompleted, GetCurrentThreadId());
         }
 
-        if (releaseCompleted && state.currentFGSwapchain == fgProxyBeforeRelease)
-            state.currentFGSwapchain = nullptr;
-
-        if (releaseCompleted && state.currentFGSwapchain == nullptr &&
-            state.currentFGSwapchainGeneration.load(std::memory_order_acquire) == wrapperGeneration)
+        bool retireQueueGeneration = false;
         {
+#ifdef USE_LOCAL_MUTEX
+            OwnedLockGuard lock(_localMutex, 999);
+#endif
+            auto& state = State::Instance();
+
+            if (releaseCompleted && state.currentFGSwapchain == fgProxyBeforeRelease)
+                state.currentFGSwapchain = nullptr;
+
+            if (releaseCompleted && state.currentFGSwapchain == nullptr &&
+                state.currentFGSwapchainGeneration.load(std::memory_order_acquire) == wrapperGeneration)
+            {
+                state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
+                retireQueueGeneration = true;
+            }
+
+            if (!canReleaseCurrentFgLifecycle && fg != nullptr && state.currentFGSwapchain != nullptr)
+            {
+                LOG_INFO("[FG][Lifecycle] action = stale_wrapped_release_skipped, wrapper = {:X}, "
+                         "wrapper_generation = {}, current_generation = {}, was_current_wrapped = {}, hwnd = {:X}",
+                         (size_t) this, wrapperGeneration, currentGeneration, wasCurrentWrapped, (size_t) _handle);
+            }
+        }
+
+        if (retireQueueGeneration)
             FGHooks::RetireQueueGeneration(wrapperGeneration);
-            state.currentFGSwapchainGeneration.store(0, std::memory_order_release);
-        }
 
         const auto refCount = real != nullptr ? real->Release() : 0;
 
         LOG_DEBUG("Real swapchain released, refCount: {}", refCount);
+        LOG_DEBUG("[DXGI][WrapperLifecycle] action = final_release_complete, wrapper = {:X}, "
+                  "wrapper_generation = {}, releaseCompleted = {}, thread = {}",
+                  (size_t) this, wrapperGeneration, releaseCompleted, GetCurrentThreadId());
 
         delete this;
     }

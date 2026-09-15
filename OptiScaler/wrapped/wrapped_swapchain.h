@@ -3,6 +3,7 @@
 #include "SysUtils.h"
 #include <OwnedMutex.h>
 #include <Config.h>
+#include <atomic>
 
 #include "dxgi1_6.h"
 #include "d3d12.h"
@@ -91,6 +92,7 @@ class DECLSPEC_UUID("3af622a3-82d0-49cd-994f-cce05122c222") WrappedIDXGISwapChai
     LONG _refcount;
     UINT _lastFlags = 0;
     uint64_t _fgGenerationAtCreation = 0;
+    std::atomic_bool _finalReleaseInProgress { false };
 
     IUnknown* _device = nullptr;
     IUnknown* _device2 = nullptr;
