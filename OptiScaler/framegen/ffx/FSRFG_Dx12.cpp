@@ -587,7 +587,7 @@ bool FSRFG_Dx12::Dispatch()
         }
     }
 
-    if (config->FGUseMutexForSwapchain.value_or_default() && Mutex.getOwner() == 1)
+    if (config->FGUseMutexForSwapchain.value_or_default() && Mutex.isOwnedByCurrentThread(1))
     {
         LOG_TRACE("Releasing FG->Mutex: {}", Mutex.getOwner());
         Mutex.unlockThis(1);
@@ -1298,7 +1298,7 @@ void FSRFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
         UpdateTarget();
 
         // Release FG mutex
-        if (Mutex.getOwner() == 2)
+        if (Mutex.isOwnedByCurrentThread(2))
             Mutex.unlockThis(2);
     }
 

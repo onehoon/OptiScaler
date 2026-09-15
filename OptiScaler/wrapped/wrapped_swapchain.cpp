@@ -724,7 +724,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullsc
         {
 
             if (State::Instance().currentFG != nullptr && State::Instance().currentFG->IsActive() &&
-                State::Instance().currentFG->Mutex.getOwner() != 3)
+                !State::Instance().currentFG->Mutex.isOwnedByCurrentThread(3))
             {
                 LOG_TRACE("Waiting ffxMutex 3, current: {}", State::Instance().currentFG->Mutex.getOwner());
                 State::Instance().currentFG->Mutex.lock(3);
@@ -768,6 +768,9 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
 {
     LOG_DEBUG("");
 
+    bool ffxLock = false;
+    auto* fg = State::Instance().currentFG;
+
 #ifdef USE_LOCAL_MUTEX
     // dlssg calls this from present it seems
     // don't try to get a mutex when present owns it while dlssg mod is enabled
@@ -775,12 +778,16 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
         OwnedLockGuard lock(_localMutex, 1);
 #endif
 
-    if (State::Instance().currentFG != nullptr && Config::Instance()->FGUseMutexForSwapchain.value_or_default() &&
-        State::Instance().currentFG->Mutex.getOwner() != 6677 && State::Instance().currentFG->Mutex.getOwner() != 6678)
+    if (fg != nullptr && Config::Instance()->FGUseMutexForSwapchain.value_or_default())
     {
-        LOG_TRACE("Waiting ffxMutex 3, current: {}", State::Instance().currentFG->Mutex.getOwner());
-        State::Instance().currentFG->Mutex.lock(3);
-        LOG_TRACE("Accuired ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
+        const bool nestedResizeHook = fg->Mutex.isOwnedByCurrentThread(6677) || fg->Mutex.isOwnedByCurrentThread(6678);
+        if (!nestedResizeHook)
+        {
+            LOG_TRACE("Waiting ffxMutex 3, current: {}", fg->Mutex.getOwner());
+            fg->Mutex.lock(3);
+            ffxLock = true;
+            LOG_TRACE("Accuired ffxMutex: {}", fg->Mutex.getOwner());
+        }
     }
 
     HRESULT result;
@@ -972,10 +979,10 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
 
     LOG_DEBUG("result: {0:X}", (UINT) result);
 
-    if (State::Instance().currentFG != nullptr && Config::Instance()->FGUseMutexForSwapchain.value_or_default())
+    if (ffxLock && fg != nullptr)
     {
-        LOG_TRACE("Releasing ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
-        State::Instance().currentFG->Mutex.unlockThis(3);
+        LOG_TRACE("Releasing ffxMutex: {}", fg->Mutex.getOwner());
+        fg->Mutex.unlockThis(3);
     }
 
     return result;
@@ -1144,6 +1151,9 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
 {
     LOG_DEBUG("");
 
+    bool ffxLock = false;
+    auto* fg = State::Instance().currentFG;
+
 #ifdef USE_LOCAL_MUTEX
     // dlssg calls this from present it seems
     // don't try to get a mutex when present owns it while dlssg mod is enabled
@@ -1151,13 +1161,19 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
         OwnedLockGuard lock(_localMutex, 2);
 #endif
 
-    if (State::Instance().currentFG != nullptr && Config::Instance()->FGUseMutexForSwapchain.value_or_default() &&
-        State::Instance().currentFG->Mutex.getOwner() != 6677 &&
-        State::Instance().currentFG->Mutex.getOwner() != 6678 && State::Instance().currentFG->Mutex.getOwner() != 2)
+    if (fg != nullptr && Config::Instance()->FGUseMutexForSwapchain.value_or_default())
     {
-        LOG_TRACE("Waiting ffxMutex 3, current: {}", State::Instance().currentFG->Mutex.getOwner());
-        State::Instance().currentFG->Mutex.lock(3);
-        LOG_TRACE("Accuired ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
+        const bool nestedResizeHook = fg->Mutex.isOwnedByCurrentThread(6677) || fg->Mutex.isOwnedByCurrentThread(6678);
+        // Present may invoke this callback from another thread. Keep this observation global
+        // until every vendor callback path has a proven same-thread contract.
+        const bool presentOperationInProgress = fg->Mutex.getOwner() == 2;
+        if (!nestedResizeHook && !presentOperationInProgress)
+        {
+            LOG_TRACE("Waiting ffxMutex 3, current: {}", fg->Mutex.getOwner());
+            fg->Mutex.lock(3);
+            ffxLock = true;
+            LOG_TRACE("Accuired ffxMutex: {}", fg->Mutex.getOwner());
+        }
     }
 
     auto state = &State::Instance();
@@ -1377,11 +1393,10 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
 
     LOG_DEBUG("result: {0:X}", (UINT) result);
 
-    if (State::Instance().activeFgOutput == FGOutput::FSRFG &&
-        Config::Instance()->FGUseMutexForSwapchain.value_or_default())
+    if (ffxLock && fg != nullptr)
     {
-        LOG_TRACE("Releasing ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
-        State::Instance().currentFG->Mutex.unlockThis(3);
+        LOG_TRACE("Releasing ffxMutex: {}", fg->Mutex.getOwner());
+        fg->Mutex.unlockThis(3);
     }
 
     return result;

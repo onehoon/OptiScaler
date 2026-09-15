@@ -41,10 +41,10 @@ class FGHooks
     inline static PFN_Release o_FGRelease = nullptr;
     inline static PFN_GetFrameLatencyWaitableObject o_FGSCGetFrameLatencyWaitableObject = nullptr;
     inline static HWND _hwnd = nullptr;
-    inline static bool _skipResize = false;
-    inline static bool _skipResize1 = false;
-    inline static bool _skipPresent = false;
-    inline static bool _skipPresent1 = false;
+    inline static thread_local bool _skipResize = false;
+    inline static thread_local bool _skipResize1 = false;
+    inline static thread_local bool _skipPresent = false;
+    inline static thread_local bool _skipPresent1 = false;
     inline static UINT _lastPresentFlags = 0;
     inline static double _lastFGFrameTime = -1.0;
 
