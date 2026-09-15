@@ -4,6 +4,44 @@
 #include <resource_tracking/ResTrack_dx12.h>
 #include <magic_enum.hpp>
 
+namespace
+{
+constexpr uint32_t kStreamlineInputMutexOwner = 3;
+
+class ScopedStreamlineFGTransaction
+{
+  private:
+    IFGFeature_Dx12* _fg = nullptr;
+    bool _locked = false;
+
+  public:
+    explicit ScopedStreamlineFGTransaction(IFGFeature_Dx12* fg) : _fg(fg)
+    {
+        if (_fg == nullptr || !Config::Instance()->FGUseMutexForSwapchain.value_or_default() ||
+            State::Instance().activeFgOutput != FGOutput::XeFG)
+        {
+            _fg = nullptr;
+            return;
+        }
+
+        if (_fg->Mutex.isOwnedByCurrentThread())
+            return;
+
+        _fg->Mutex.lock(kStreamlineInputMutexOwner);
+        _locked = true;
+    }
+
+    ~ScopedStreamlineFGTransaction()
+    {
+        if (_locked)
+            _fg->Mutex.unlockThis(kStreamlineInputMutexOwner);
+    }
+
+    ScopedStreamlineFGTransaction(const ScopedStreamlineFGTransaction&) = delete;
+    ScopedStreamlineFGTransaction& operator=(const ScopedStreamlineFGTransaction&) = delete;
+};
+} // namespace
+
 void Sl_Inputs_Dx12::CheckForFrame(IFGFeature_Dx12* fg, uint32_t frameId)
 {
     std::scoped_lock lock(_frameBoundaryMutex);
@@ -58,6 +96,7 @@ bool Sl_Inputs_Dx12::setConstants(const sl::Constants& values, uint32_t frameId)
     if (fgOutput == nullptr)
         return false;
 
+    ScopedStreamlineFGTransaction transaction(fgOutput);
     CheckForFrame(fgOutput, frameId);
 
     auto data = sl::Constants {};
@@ -256,6 +295,7 @@ bool Sl_Inputs_Dx12::evaluateState(ID3D12Device* device)
     if (fgOutput == nullptr)
         return false;
 
+    ScopedStreamlineFGTransaction transaction(fgOutput);
     LOG_FUNC();
 
     static UINT64 lastFrameCount = 0;
@@ -292,6 +332,7 @@ bool Sl_Inputs_Dx12::reportResource(const sl::ResourceTag& tag, ID3D12GraphicsCo
     if (fgOutput == nullptr || !Config::Instance()->FGEnabled.value_or_default())
         return false;
 
+    ScopedStreamlineFGTransaction transaction(fgOutput);
     static const bool ignoreValidUntilEvaluateForFG =
         State::Instance().gameQuirks[GameQuirk::IgnoreValidUntilEvaluateForFG];
 
@@ -447,11 +488,14 @@ bool Sl_Inputs_Dx12::dispatchFG()
 
 void Sl_Inputs_Dx12::markPresent(uint64_t frameId)
 {
+    auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(State::Instance().currentFG);
+    ScopedStreamlineFGTransaction transaction(fgOutput);
+
     std::scoped_lock lock(_frameBoundaryMutex);
     LOG_TRACE("frameId: {}", frameId);
     _isFrameFinished = true;
     _lastFrameId = static_cast<uint32_t>(frameId);
 
-    if (State::Instance().currentFG != nullptr)
-        State::Instance().currentFG->SetFrameCount(frameId);
+    if (fgOutput != nullptr)
+        fgOutput->SetFrameCount(frameId);
 }
