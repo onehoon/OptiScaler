@@ -3,6 +3,7 @@
 #include <atomic>
 #include <functional>
 #include <mutex>
+#include <wrl/client.h>
 
 #include <framegen/IFGFeature_Dx12.h>
 
@@ -26,6 +27,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     std::atomic<DWORD> _swapchainReleaseOwnerThread { 0 };
     std::mutex _swapchainLifecycleMutex;
     bool _swapchainRecreationBlocked = false;
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> _ownedGameCommandQueue;
 
     uint32_t _width = 0;
     uint32_t _height = 0;
@@ -42,6 +44,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     bool PrepareREFForSwapchainRetire(IUnknown* publicProxy, HWND hwnd, const char* trigger);
     bool DestroySwapchainContext();
     bool ReleaseSwapchainLocked(HWND hwnd, std::function<void()> releaseFinalProxy = {});
+    void CommitGameCommandQueue(ID3D12CommandQueue* queue);
     xefg_swapchain_d3d12_resource_data_t GetResourceData(FG_ResourceType type, int index = -1);
 
     bool Dispatch();
