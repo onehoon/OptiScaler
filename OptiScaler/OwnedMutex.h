@@ -26,6 +26,12 @@ class OwnedMutex
                ownerThread.load(std::memory_order_acquire) == GetCurrentThreadId();
     }
 
+    bool isOwnedByCurrentThread() const
+    {
+        return owner.load(std::memory_order_acquire) != 0 &&
+               ownerThread.load(std::memory_order_acquire) == GetCurrentThreadId();
+    }
+
     // Only unlocks if the logical owner and the owning OS thread both match.
     void unlockThis(uint32_t _owner)
     {
