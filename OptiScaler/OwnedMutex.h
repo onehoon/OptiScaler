@@ -10,30 +10,42 @@ class OwnedMutex
   private:
     std::shared_mutex mtx;
     std::atomic<uint32_t> owner { 0 }; // don't use 0
+    std::atomic<DWORD> ownerThread { 0 };
 
   public:
     void lock(uint32_t _owner)
     {
         mtx.lock();
+        ownerThread.store(GetCurrentThreadId(), std::memory_order_release);
         owner.store(_owner, std::memory_order_release);
     }
 
-    // Only unlocks if owner matches
+    bool isOwnedByCurrentThread(uint32_t _owner) const
+    {
+        return owner.load(std::memory_order_acquire) == _owner &&
+               ownerThread.load(std::memory_order_acquire) == GetCurrentThreadId();
+    }
+
+    // Only unlocks if the logical owner and the owning OS thread both match.
     void unlockThis(uint32_t _owner)
     {
         uint32_t current_owner = owner.load(std::memory_order_acquire);
+        DWORD current_owner_thread = ownerThread.load(std::memory_order_acquire);
+        DWORD current_thread = GetCurrentThreadId();
 
-        if (current_owner == 0 || current_owner != _owner)
+        if (current_owner == 0 || current_owner != _owner || current_owner_thread != current_thread)
         {
-            LOG_WARN("current_owner: {}, _owner: {}", current_owner, _owner);
+            LOG_WARN("current_owner: {}, _owner: {}, owner_thread: {:X}, current_thread: {:X}", current_owner, _owner,
+                     current_owner_thread, current_thread);
             return;
         }
 
         owner.store(0, std::memory_order_release);
+        ownerThread.store(0, std::memory_order_release);
         mtx.unlock();
     }
 
-    uint32_t getOwner() { return owner.load(std::memory_order_seq_cst); }
+    uint32_t getOwner() const { return owner.load(std::memory_order_seq_cst); }
 };
 
 class OwnedLockGuard

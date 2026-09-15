@@ -1221,7 +1221,7 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
     auto fg = State::Instance().currentFG;
     bool mutexUsed = false;
     if (willPresent && fg != nullptr && fg->IsActive() && !fg->IsPaused() &&
-        Config::Instance()->FGUseMutexForSwapchain.value_or_default() && fg->Mutex.getOwner() != 2)
+        Config::Instance()->FGUseMutexForSwapchain.value_or_default() && !fg->Mutex.isOwnedByCurrentThread(2))
     {
         LOG_TRACE("Waiting FG->Mutex 2, current: {}", fg->Mutex.getOwner());
         fg->Mutex.lock(2);
