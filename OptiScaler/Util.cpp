@@ -673,6 +673,33 @@ bool Util::CheckForRealObject(std::string functionName, IUnknown* pObject, IUnkn
     return false;
 }
 
+bool Util::QueryRealObjectOwned(std::string functionName, IUnknown* pObject, IUnknown** ppRealObject)
+{
+    if (pObject == nullptr || ppRealObject == nullptr)
+        return false;
+
+    *ppRealObject = nullptr;
+
+    if (streamlineRiid.Data1 == 0)
+    {
+        auto iidResult = IIDFromString(L"{ADEC44E2-61F0-45C3-AD9F-1B37379284FF}", &streamlineRiid);
+
+        if (iidResult != S_OK)
+            return false;
+    }
+
+    auto qResult = pObject->QueryInterface(streamlineRiid, reinterpret_cast<void**>(ppRealObject));
+
+    if (qResult != S_OK || *ppRealObject == nullptr)
+    {
+        *ppRealObject = nullptr;
+        return false;
+    }
+
+    LOG_INFO("{} Streamline proxy found!", functionName);
+    return true;
+}
+
 void Util::GetDeviceRemovedReason(ID3D11Device* pDevice)
 {
     auto reason = pDevice->GetDeviceRemovedReason();

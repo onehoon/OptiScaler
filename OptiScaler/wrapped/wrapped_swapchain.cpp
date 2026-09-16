@@ -19,6 +19,7 @@
 
 #include <d3d11.h>
 #include <d3d12.h>
+#include <wrl/client.h>
 
 #ifdef DXGI_DEBUG_ENABLED
 #include <magic_enum.hpp>
@@ -55,12 +56,11 @@ static void WaitForGPUIdle(IUnknown* object)
     if (State::Instance().currentD3D12Device == nullptr || object == nullptr)
         return;
 
-    ID3D12CommandQueue* queue = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue;
 
-    if (object->QueryInterface(IID_PPV_ARGS(&queue)) == S_OK)
+    if (object->QueryInterface(IID_PPV_ARGS(queue.GetAddressOf())) == S_OK)
     {
         LOG_DEBUG("Command queue obtained for GPU idle wait");
-        queue->Release();
     }
 
     if (queue != nullptr && resizeFence != nullptr && resizeFenceEvent != nullptr)
@@ -185,8 +185,10 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
     }
 
     ID3D11Device* device = nullptr;
-    ID3D12Device* device12 = nullptr;
-    ID3D12CommandQueue* cq = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> queriedQueue;
+    Microsoft::WRL::ComPtr<IUnknown> realQueueOwner;
+    Microsoft::WRL::ComPtr<ID3D12Device> d3d12Device;
+    ID3D12CommandQueue* queueForUse = nullptr;
 
     bool isD3D11 = false;
 
@@ -249,33 +251,30 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
                 dxgiDevice->Release();
         }
     }
-    else if (pDevice->QueryInterface(IID_PPV_ARGS(&cq)) == S_OK)
+    else if (pDevice->QueryInterface(IID_PPV_ARGS(queriedQueue.GetAddressOf())) == S_OK)
     {
-        cq->Release();
-
         if (!_dx12Device)
             LOG_DEBUG("D3D12CommandQueue captured");
 
-        ID3D12CommandQueue* realQueue = nullptr;
-        if (Util::CheckForRealObject(__FUNCTION__, cq, (IUnknown**) &realQueue))
-            cq = realQueue;
+        queueForUse = queriedQueue.Get();
+
+        if (Util::QueryRealObjectOwned(__FUNCTION__, queriedQueue.Get(), realQueueOwner.GetAddressOf()))
+            queueForUse = reinterpret_cast<ID3D12CommandQueue*>(realQueueOwner.Get());
 
         State::Instance().swapchainApi = DX12;
 
         if (State::Instance().currentCommandQueue == nullptr)
-            State::Instance().currentCommandQueue = cq;
+            State::Instance().currentCommandQueue = queueForUse;
 
-        if (cq->GetDevice(IID_PPV_ARGS(&device12)) == S_OK)
+        if (queueForUse->GetDevice(IID_PPV_ARGS(d3d12Device.GetAddressOf())) == S_OK)
         {
-            device12->Release();
-
             if (!_dx12Device)
                 LOG_DEBUG("D3D12Device captured");
 
             _dx12Device = true;
 
-            State::Instance().currentD3D12Device = device12;
-            D3D12Hooks::HookDevice(device12);
+            State::Instance().currentD3D12Device = d3d12Device.Get();
+            D3D12Hooks::HookDevice(d3d12Device.Get());
         }
     }
 
@@ -288,9 +287,9 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
     // Upscaler GPU time computation
     if (willPresent && (fg == nullptr || !fg->IsActive() || fg->IsPaused()))
     {
-        if (cq != nullptr)
+        if (queueForUse != nullptr)
         {
-            UpscalerTimeDx12::ReadUpscalingTime(cq);
+            UpscalerTimeDx12::ReadUpscalingTime(queueForUse);
         }
         else if (device != nullptr)
         {
@@ -427,20 +426,9 @@ WrappedIDXGISwapChain4::WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* p
     _lastFlags = flags;
 
     _real->QueryInterface(IID_PPV_ARGS(&_real1));
-    if (_real1 != nullptr)
-        _real1->Release();
-
     _real->QueryInterface(IID_PPV_ARGS(&_real2));
-    if (_real2 != nullptr)
-        _real2->Release();
-
     _real->QueryInterface(IID_PPV_ARGS(&_real3));
-    if (_real3 != nullptr)
-        _real3->Release();
-
     _real->QueryInterface(IID_PPV_ARGS(&_real4));
-    if (_real4 != nullptr)
-        _real4->Release();
 
     _real->AddRef();
     auto refCount = _real->Release();
@@ -450,7 +438,24 @@ WrappedIDXGISwapChain4::WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* p
     LOG_INFO("{} created, real: {:X}, refCount: {}", _id, (UINT64) real, refCount);
 }
 
-WrappedIDXGISwapChain4::~WrappedIDXGISwapChain4() {}
+WrappedIDXGISwapChain4::~WrappedIDXGISwapChain4() { ReleaseRealInterfaceRefs(); }
+
+void WrappedIDXGISwapChain4::ReleaseRealInterfaceRefs() noexcept
+{
+    const auto releaseAndNull = [](auto*& value)
+    {
+        if (value != nullptr)
+        {
+            value->Release();
+            value = nullptr;
+        }
+    };
+
+    releaseAndNull(_real4);
+    releaseAndNull(_real3);
+    releaseAndNull(_real2);
+    releaseAndNull(_real1);
+}
 
 //
 HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::QueryInterface(REFIID riid, void** ppvObject)
@@ -688,6 +693,8 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
 
         if (retireQueueGeneration)
             FGHooks::RetireQueueGeneration(wrapperGeneration);
+
+        ReleaseRealInterfaceRefs();
 
         const auto refCount = real != nullptr ? real->Release() : 0;
 

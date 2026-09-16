@@ -52,6 +52,9 @@ MonitorInfo GetMonitorInfoForWindow(HWND hwnd);
 MonitorInfo GetMonitorInfoForOutput(IDXGIOutput* pOutput);
 int GetActiveRefreshRate(HWND hwnd);
 bool CheckForRealObject(std::string functionName, IUnknown* pObject, IUnknown** ppRealObject);
+// Queries the Streamline real-object interface and transfers the single QI reference to the caller.
+// The caller owns the returned reference and must release it exactly once.
+bool QueryRealObjectOwned(std::string functionName, IUnknown* pObject, IUnknown** ppRealObject);
 void GetDeviceRemovedReason(ID3D11Device* pDevice);
 void GetDeviceRemovedReason(ID3D12Device* pDevice);
 void LoadProxyLibrary(const std::wstring& name, const std::wstring& optiPath, const std::wstring& overridePath,
