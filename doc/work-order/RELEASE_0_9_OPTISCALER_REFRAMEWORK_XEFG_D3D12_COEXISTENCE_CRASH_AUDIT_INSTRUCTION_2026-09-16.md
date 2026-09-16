@@ -16,19 +16,83 @@
 
 ---
 
+## 0. Critical audit premise — coexistence is already intentionally engineered and heavily hardened
+
+This audit starts from a very important premise:
+
+> **OptiScaler and the forked REFramework are not two unrelated components that merely happen to hook the same D3D12/XeFG path. Both repositories have already been deliberately modified so they can coexist, and a substantial amount of lifecycle, hook-chain, ownership, reentrancy, detach, rehook, and final-release hardening has already been implemented on both sides.**
+
+The auditor must understand the current combined design before judging any individual pointer, hook, lock, callback, or release path.
+
+This is **not** a greenfield compatibility review and **not** a request to invent a new coexistence architecture. The current coexistence design is the baseline under audit.
+
+At a minimum, the current design already includes deliberate cross-component safeguards such as:
+
+### OptiScaler side
+
+- explicit XeFG swapchain/context lifecycle ownership;
+- a dynamic cross-module pre-retire handshake through `REFramework_XeFG_PreRetireSwapchainV1`;
+- final-proxy and wrapped-swapchain release ordering intended to let REF detach before the physical proxy is retired;
+- process-shutdown behavior that intentionally avoids unsafe REF pre-retire calls while still retiring XeFG locally;
+- Streamline/XeFG transaction serialization intended to prevent overlapping frame-input/Present lifecycle mutation;
+- D3D12 wrapper COM-reference hardening for local queue/device/real-object use;
+- retained `_real1.._real4` capability references through wrapper lifetime;
+- dedicated XeFG recreate/destroy/failed-destroy handling rather than generic swapchain teardown.
+
+### REFramework side
+
+- dedicated XeFG compatibility code rather than treating the proxy as an ordinary game swapchain;
+- runtime interception of Intel XeFG Init/GetSwapChainPtr/Destroy APIs;
+- explicit runtime identity tracking using slot/context/hwnd;
+- binding-generation tracking across replacement/recreation;
+- a deliberately **borrowed** XeFG swapchain relationship whose lifetime is bounded by the owner, while queue/device references are owned with `ComPtr`;
+- candidate handoff and external-binding logic specifically for XeFG;
+- renderer detach/reset before owner-side proxy retirement;
+- PR55 late-callback forwarding that resolves the restored/current vtable instead of blindly calling a detached instance-hook original;
+- PR56 split hook-monitor scope for XeFG factory transitions to avoid lock inversion during downstream `CreateSwapChainForHwnd` work;
+- transition suppression / delayed one-shot rehook / monitor quarantine logic intended to prevent background recovery from mutating the same hook chain at unsafe times.
+
+Therefore, the audit objective is **residual failure discovery after coexistence hardening**:
+
+```text
+current intentionally coordinated Opti + REF coexistence design
+    + existing safeguards on both sides
+    + real concurrent/reentrant DX12/XeFG lifecycle behavior
+    -> is there still any reachable crash-capable gap?
+```
+
+The auditor must **not** assume that the existence of two hooks, two lifecycle managers, borrowed pointers, dynamic exports, temporary unhooking, or separate state machines means the integration is fundamentally unsafe. Many of those mechanisms are intentional parts of the coexistence design.
+
+Before raising any issue, first answer:
+
+1. **What current coexistence safeguard is supposed to make this path safe?**
+2. **Does the present source actually violate that safeguard, or is the path already covered?**
+3. **If it is still unsafe, what precise interleaving escapes the existing design?**
+4. **What exact invalid operation occurs after the safeguard fails?**
+
+If the auditor proposes a redesign without first proving a residual crash-capable escape from the current architecture, that is outside the purpose of this audit.
+
+The correct mindset is:
+
+> **Assume the current architecture is an intentionally coordinated, already-hardened coexistence system. Audit it adversarially for the remaining edge cases that can still break despite those protections. Do not restart the compatibility design from first principles.**
+
+---
+
 ## 1. Mission
 
-Perform a **complete two-repository source audit** for **game-crash-capable coexistence defects caused specifically by OptiScaler and the forked REFramework jointly participating in the same D3D12 / DXGI / XeFG swapchain lifecycle**.
+Perform a **complete two-repository source audit** for **residual game-crash-capable coexistence defects that may still remain after the substantial OptiScaler + forked REFramework coexistence hardening already present in both repositories**.
 
 The audit is deliberately narrow.
 
 The central question is:
 
-> **Can the current OptiScaler and forked REFramework implementations, while both are active in the XeFG D3D12 path, reach an ordering, lifetime, hook-chain, reentrancy, or teardown state that causes a game crash, fatal D3D failure, use-after-free, invalid COM call, double release, stale trampoline call, deadlock/hang, or stale queue/device/swapchain dereference?**
+> **Given the current intentionally coordinated OptiScaler + REFramework XeFG/D3D12 architecture and its existing safeguards, is there still any reachable ordering, lifetime, hook-chain, reentrancy, generation, detach/rehook, or teardown edge case that escapes those safeguards and causes a game crash, fatal D3D failure, use-after-free, invalid COM call, double release, stale trampoline call, deadlock/hang, or stale queue/device/swapchain dereference?**
+
+The primary task is **not** to decide whether the two projects should coexist differently. The primary task is to determine whether the coexistence structure that has already been built still contains any crash-capable hole.
 
 Do **not** audit REFramework as a general mod framework. Do **not** audit OptiScaler as a general frame-generation implementation. Audit only the boundary where the two coexist for XeFG on D3D12.
 
-Do **not** begin by implementing a fix. First produce a complete audit report that proves or disproves every candidate interleaving. A suspicious code shape without a reachable crash-capable path is not a finding.
+Do **not** begin by implementing a fix. First reconstruct the current coexistence design, then produce a complete audit report that proves or disproves every candidate residual interleaving. A suspicious code shape without a reachable crash-capable path is not a finding.
 
 ---
 
@@ -100,7 +164,7 @@ Do not spend audit time on:
 - game-specific rendering correctness;
 - anti-tamper behavior except where the supplied runtime evidence directly establishes that a shared Opti/REF hook/lifecycle event triggers it.
 
-**This is not a refactoring audit.** Any recommendation whose main justification is cleaner ownership, simpler architecture, fewer raw pointers, or easier maintenance is outside scope unless the current implementation has a demonstrated crash-capable interleaving.
+**This is not a refactoring audit and not a compatibility-architecture redesign exercise.** Any recommendation whose main justification is cleaner ownership, simpler architecture, fewer raw pointers, a unified hook manager, a single global lifecycle owner, or easier maintenance is outside scope unless the current implementation has a demonstrated crash-capable interleaving that escapes the already-implemented coexistence safeguards.
 
 ---
 
@@ -109,7 +173,7 @@ Do not spend audit time on:
 A primary finding is allowed only when **all three** are established:
 
 1. **Reachability** — the path is source-confirmed or precisely conditional with explicit preconditions;
-2. **Broken shared invariant** — identify exactly which Opti/REF hook, COM object, generation, lock, trampoline, or lifecycle invariant becomes invalid;
+2. **Broken shared invariant** — identify exactly which existing Opti/REF coexistence invariant, hook, COM object, generation, lock, trampoline, or lifecycle safeguard fails;
 3. **Crash-capable consequence** — show the exact invalid operation that can produce at least one of:
    - access violation / use-after-free;
    - double `Release`, refcount underflow, or final-release reuse;
@@ -139,15 +203,17 @@ Do **not** promote the following to a crash finding without a concrete invalid o
 - "a mutex is nonrecursive";
 - "there is a race window";
 - "the code should use `ComPtr`";
-- "this would be easier to reason about after refactoring".
+- "this would be easier to reason about after refactoring";
+- "both projects manage the same lifecycle";
+- "the coexistence model is complicated".
 
 If the crash consequence cannot be proven, classify it as `INSUFFICIENT EVIDENCE` or omit it from the primary findings.
 
 ---
 
-## 4. Known current safeguards — verify them, do not rediscover old bugs as current bugs
+## 4. Known current safeguards — treat these as the coexistence baseline, verify them, and do not rediscover old bugs as current bugs
 
-The audit must explicitly account for the current fixes below.
+The following items are not isolated patches to be ignored while reasoning from a generic two-hook model. Together they form part of the **current coexistence architecture**. The audit must explicitly account for them before classifying any candidate.
 
 ### 4.1 OptiScaler PR34 — final-release reentrancy/deadlock hardening
 
@@ -205,9 +271,23 @@ Any factory deadlock finding must prove a lock cycle or stale state **after** th
 
 ---
 
-## 5. Establish the actual cross-module architecture first
+## 5. Establish and understand the existing combined coexistence architecture first
 
-Before searching for bugs, draw the current combined ownership/callback graph. Do not infer it from names.
+Before searching for bugs, reconstruct the current combined ownership/callback graph and explain **how the present design is intended to let both projects coexist safely**. Do not infer it from names and do not skip directly to suspicious code.
+
+The report must explicitly identify the intentional coordination points between the projects, including at least:
+
+- Opti's owner-side proxy/context retirement authority;
+- REF's borrowed-swapchain / owned-queue-device binding model;
+- the Opti -> REF pre-retire detach handshake;
+- REF runtime interception and candidate handoff;
+- REF binding generations across Opti proxy recreation;
+- PR55 late-callback handling after detach;
+- PR56 factory transition scope splitting and rehook suppression;
+- Opti shutdown behavior that intentionally changes the cross-module contract;
+- where each side deliberately avoids taking ownership that belongs to the other side.
+
+Only after this architecture is reconstructed should the auditor search for a residual failure path.
 
 At minimum resolve these logical objects:
 
@@ -258,7 +338,8 @@ For every edge, label:
 - which module can replace/clear the pointer;
 - which lock, if any, is held;
 - whether a callback crosses module boundaries;
-- whether the edge is generation-bound.
+- whether the edge is generation-bound;
+- **which current coexistence safeguard is supposed to make the edge safe**.
 
 ---
 
@@ -283,8 +364,8 @@ At minimum resolve:
 
 Required columns:
 
-| API / slot | Opti hook site and mechanism | REF hook site and mechanism | Original/trampoline storage | Install order | Reinstall/unhook path | Current invocation chain | Late-callback behavior | Crash-capable stale-target path? |
-|---|---|---|---|---|---|---|---|---|
+| API / slot | Opti hook site and mechanism | REF hook site and mechanism | Original/trampoline storage | Install order | Reinstall/unhook path | Current invocation chain | Existing coexistence safeguard | Late-callback behavior | Residual crash-capable stale-target path? |
+|---|---|---|---|---|---|---|---|---|---|
 
 Do not assume hook order from expected module load order. Establish it from source and, where necessary, available logs.
 
@@ -298,8 +379,10 @@ For every shared vtable method answer:
 6. Does current REF late forwarding eliminate the stale path?
 7. Can Opti hold an equivalent stale function pointer or vtable snapshot?
 8. Can either side restore a vtable entry over the other side's still-active hook?
+9. Which existing design mechanism is intended to prevent each unsafe case?
+10. Is there a reachable ordering that escapes that mechanism?
 
-A stale hook finding is valid only if you identify the exact saved target, the mutation that invalidates it, and the later reachable call through it.
+A stale hook finding is valid only if you identify the exact saved target, the mutation that invalidates it, the existing safeguard that should have covered it, and the later reachable call through it.
 
 ---
 
@@ -323,8 +406,8 @@ Build a lifetime/ownership matrix for at least:
 
 Required columns:
 
-| Object | Creator | Initial ref owner | Borrowed/owned in Opti | Borrowed/owned in REF | Publication site | Generation identity | Retire trigger | Final Release owner | Last legal callback/use | Possible stale dereference |
-|---|---|---|---|---|---|---|---|---|---|---|
+| Object | Creator | Initial ref owner | Borrowed/owned in Opti | Borrowed/owned in REF | Publication site | Generation identity | Existing coexistence safeguard | Retire trigger | Final Release owner | Last legal callback/use | Possible stale dereference |
+|---|---|---|---|---|---|---|---|---|---|---|---|
 
 COM accounting must be explicit where a crash finding depends on it. Show the relevant `QI/AddRef/Release` sequence. Do not infer ownership from a field name.
 
@@ -352,6 +435,8 @@ The current REF export calls `XeFGCompatibility::prepare_for_public_proxy_retire
 - discards pending candidate state;
 - asks `D3D12Hook` to detach the matching XeFG binding;
 - resets REF renderer state / removes the instance relationship before returning safe-detached.
+
+This handshake is an intentional coexistence mechanism. Audit whether any reachable path escapes it; do not treat the handshake itself as evidence that the two projects are improperly coupled.
 
 Trace the entire call stack **in both directions** and answer:
 
@@ -401,7 +486,7 @@ Game/owner
      -> wrapper delete
 ```
 
-The diagram must reflect **actual current code order**, including PR34/35/38.
+The diagram must reflect **actual current code order**, including PR34/35/38 and the intentional Opti/REF pre-retire contract.
 
 Crash questions:
 
@@ -413,13 +498,13 @@ Crash questions:
 - Can an Opti callback run after `delete this` because REF saved an entry pointing into the wrapper?
 - Can the underlying `_real*` interface release order invalidate a method target still needed by REF late forwarding?
 
-Only report a defect when the exact callback/refcount/lock sequence reaches an invalid operation.
+Only report a defect when the exact callback/refcount/lock sequence reaches an invalid operation **despite the current detach/final-release coordination**.
 
 ---
 
 ## 10. CreateSwapChain / factory transition audit
 
-Current REF PR56 intentionally releases the hook-monitor mutex around downstream `CreateSwapChainForHwnd` for active/in-flight XeFG transitions and serializes final rehook using `g_xefg_factory_transition`.
+Current REF PR56 intentionally releases the hook-monitor mutex around downstream `CreateSwapChainForHwnd` for active/in-flight XeFG transitions and serializes final rehook using `g_xefg_factory_transition`. This is part of the current coexistence design, not an accidental unlock window.
 
 Trace the actual combined path when the downstream call enters Opti / XeFG / DXGI and can re-enter REF runtime hooks.
 
@@ -466,6 +551,8 @@ Required crash checks:
 - restored vtable forwarding to an Opti function whose owner object/module is no longer valid;
 - calling an old Present target after hook uninstall/reinstall.
 
+For every suspicious Present path, identify which current safeguard should cover it before claiming a residual defect.
+
 Produce at least one normal Present sequence and one worst-case retire-vs-Present sequence.
 
 ---
@@ -508,7 +595,7 @@ REF's `XeFGRuntimeRegistry` hooks Intel exports with `FunctionHook` and stores o
 - `xefgSwapChainD3D12GetSwapChainPtr`
 - `xefgSwapChainDestroy`
 
-Opti calls those XeFG APIs through its proxy loader.
+Opti calls those XeFG APIs through its proxy loader. This interception is an intentional part of the coexistence mechanism because REF needs lifecycle visibility into the Opti-created XeFG runtime objects.
 
 Audit:
 
@@ -520,7 +607,7 @@ Audit:
 6. whether Intel `Destroy` failure/warning paths leave Opti and REF with contradictory context-liveness beliefs;
 7. whether multiple XeFG runtime modules/slots can bind the wrong Opti context/proxy.
 
-Again, only promote to a crash finding when a concrete invalid call/deref is reachable.
+Again, only promote to a crash finding when a concrete invalid call/deref is reachable **after accounting for the runtime interception design and its transition bookkeeping**.
 
 ---
 
@@ -560,7 +647,7 @@ For each lifecycle event show **before / mutation / after**:
 11. final proxy release;
 12. process shutdown.
 
-Findings about stale generations must name the exact old object and the later operation that dereferences it.
+The existence of separate Opti and REF generation/state tracking is intentional. Findings about stale generations must name the exact old object, the safeguard that should have retired or rejected it, and the later operation that still dereferences it.
 
 ---
 
@@ -604,7 +691,7 @@ Thread B: REF lock Y -> Opti lock X
 
 or a same-thread nonrecursive reentry that demonstrably reacquires a held lock.
 
-Do not label "possible lock inversion" without identifying both edges in current source.
+Do not label "possible lock inversion" without identifying both edges in current source, and do not ignore PR56 or other existing scope-splitting logic that was specifically added to remove such cycles.
 
 ---
 
@@ -624,7 +711,7 @@ Answer:
 - Can an older late callback execute after a rehook and accidentally forward into the new generation?
 - Can a monitor timeout operate on a binding generation whose proxy has already been finally released?
 
-If current session/generation checks prevent this, document the invariant and classify safe.
+Remember that the monitor suppression/quarantine machinery is itself part of the coexistence hardening. If current session/generation checks prevent the candidate path, document the invariant and classify safe.
 
 ---
 
@@ -632,7 +719,7 @@ If current session/generation checks prevent this, document the invariant and cl
 
 Treat normal process shutdown separately from normal runtime retirement.
 
-Current Opti PR35 intentionally skips REF pre-retire when `State::isShuttingDown` is true.
+Current Opti PR35 intentionally skips REF pre-retire when `State::isShuttingDown` is true. This asymmetry is deliberate coexistence behavior for process teardown, not evidence that the normal runtime contract is incomplete.
 
 Trace:
 
@@ -694,7 +781,7 @@ The report must include **all** of the following diagrams. Do not stop after the
 10. **Hook-monitor timeout/recovery during active XeFG**  
     Show generation/runtime-transition guards and whether mutation can overlap a live Opti call.
 
-Each diagram must identify threads where concurrency matters.
+Each diagram must identify threads where concurrency matters and annotate the coexistence safeguard that is intended to protect each transition.
 
 ---
 
@@ -713,7 +800,7 @@ object O has final owning reference released
  -> later path dereferences/calls P
 ```
 
-State the exact COM object/interface and ref owner.
+State the exact COM object/interface and ref owner, and explain why the current pre-retire/detach/generation safeguard does not prevent the use.
 
 ### 19.2 Double release / refcount corruption
 
@@ -739,13 +826,13 @@ module A saves target T
  -> module A later calls saved T
 ```
 
-Account for REF PR55 late-vtable forwarding before declaring this defect.
+Account for REF PR55 late-vtable forwarding and current rehook/binding-generation protections before declaring this defect.
 
 ### 19.4 Deadlock
 
 Required evidence:
 
-Show exact locks, exact two paths, and exact wait cycle. Include PR56's split monitor scope.
+Show exact locks, exact two paths, and exact wait cycle. Include PR56's split monitor scope and any Opti-side transaction/lifecycle scope that intentionally prevents reentry.
 
 ### 19.5 Fatal D3D / invalid lifecycle
 
@@ -772,7 +859,8 @@ Rules:
 - historical stacks can prioritize source paths but do not prove the current code still contains the defect;
 - HookMonitor timeout after Present cessation is a downstream observation unless current source proves otherwise;
 - do not merge separate sessions into one timeline;
-- do not claim PR34-PR38 or REF PR55/56 runtime success from older binaries.
+- do not claim PR34-PR38 or REF PR55/56 runtime success from older binaries;
+- do not use an old crash to dismiss the substantial coexistence hardening that landed afterward.
 
 If no current runtime pair exercises a candidate, classify it source-only/conditional and state the exact missing evidence.
 
@@ -782,7 +870,7 @@ If no current runtime pair exercises a candidate, classify it source-only/condit
 
 For every `CONFIRMED` or `CONDITIONAL CRASH-CAPABLE DEFECT`, include:
 
-| Existing fix | Relevance to finding | Fully blocks it? | Residual reachable path |
+| Existing fix / coexistence safeguard | Relevance to finding | Fully blocks it? | Residual reachable path |
 |---|---|---|---|
 | Opti PR34 | final-release reentrancy | yes/no | exact path |
 | Opti PR35 | shutdown pre-retire | yes/no | exact path |
@@ -791,8 +879,10 @@ For every `CONFIRMED` or `CONDITIONAL CRASH-CAPABLE DEFECT`, include:
 | Opti PR38 | D3D12 COM ownership | yes/no | exact path |
 | REF PR55 | late callback forwarding | yes/no | exact path |
 | REF PR56 | factory lock inversion | yes/no | exact path |
+| Opti/REF pre-retire ABI | owner-to-observer detach contract | yes/no | exact path |
+| REF runtime identity/binding generation | old/new proxy separation | yes/no | exact path |
 
-A finding that is fully blocked by a current fix is not a current primary finding; move it to **Resolved Historical Risk / Safe by Current Invariant**.
+A finding that is fully blocked by a current safeguard is not a current primary finding; move it to **Resolved Historical Risk / Safe by Current Invariant**.
 
 ---
 
@@ -825,6 +915,7 @@ The audit is incomplete until every question below has a sourced answer or an ex
 23. Is any cross-component callback executed while both sides believe they own final teardown authority for the same proxy/context?
 24. Is there any current path where a borrowed REF swapchain outlives the caller-bounded hook lifetime documented in `XeFGBinding`?
 25. Can a `SafeNotTracked` or `SafeDetached` result be returned while a REF callback still contains an unprotected raw pointer that will later be used?
+26. For every candidate above, what current coexistence mechanism was intended to make it safe, and is the candidate a true escape from that mechanism or merely a restatement of an already-handled risk?
 
 ---
 
@@ -839,50 +930,59 @@ doc/work-order/RELEASE_0_9_OPTISCALER_REFRAMEWORK_XEFG_D3D12_COEXISTENCE_CRASH_A
 Required structure:
 
 1. **Executive verdict**
-   - count of confirmed crash-capable defects;
-   - count of conditional crash-capable defects;
-   - whether current coexistence can be considered source-safe for tested lifecycle paths;
-   - no broad "architecture quality" verdict.
+   - first summarize the current combined coexistence design and whether the auditor successfully reconstructed its intended invariants;
+   - count of confirmed residual crash-capable defects;
+   - count of conditional residual crash-capable defects;
+   - whether any audited path escapes the existing coexistence safeguards;
+   - whether current coexistence can be considered source-safe for the audited lifecycle paths;
+   - no broad "architecture quality" verdict and no judgment that the projects should use a different coexistence model unless a proven crash defect requires it.
 
 2. **Pinned revision matrix**
    - exact final audited Opti tip;
    - exact final audited REF tip;
    - note any commits that landed during audit and whether they touch scope.
 
-3. **Combined architecture / callback diagram**
+3. **Current coexistence architecture and intended safety invariants**
+   - explain the deliberate division of ownership/observation between Opti and REF;
+   - identify the cross-module coordination points already present;
+   - distinguish intentional complexity from actual defect.
 
-4. **Shared hook-chain matrix**
+4. **Combined architecture / callback diagram**
 
-5. **Shared object ownership / lifetime matrix**
+5. **Shared hook-chain matrix**
 
-6. **Combined lock-order and callback graph**
+6. **Shared object ownership / lifetime matrix**
 
-7. **Generation / lifecycle matrix**
+7. **Combined lock-order and callback graph**
 
-8. **Required timing diagrams** from section 18
+8. **Generation / lifecycle matrix**
 
-9. **Primary Crash Findings**
-   - only confirmed/conditional crash-capable issues;
+9. **Required timing diagrams** from section 18
+
+10. **Primary Residual Crash Findings**
+   - only confirmed/conditional crash-capable issues that remain after applying the current coexistence safeguards;
    - exact source and exact interleaving;
+   - which existing safeguard was bypassed or insufficient;
    - crash mechanism;
    - confidence and runtime evidence;
    - relationship to PR34-38 and REF PR55/56.
 
-10. **Safe by Current Invariant / Dismissed Candidates**
-    - suspicious paths that were proven safe;
-    - old issues already fixed;
-    - non-crash refactoring concerns excluded from action.
+11. **Safe by Current Coexistence Invariant / Dismissed Candidates**
+   - suspicious paths that were proven safe by the current coordinated design;
+   - old issues already fixed;
+   - non-crash refactoring concerns excluded from action.
 
-11. **Insufficient Evidence**
-    - exact missing source/runtime evidence;
-    - minimal diagnostic needed, if any.
+12. **Insufficient Evidence**
+   - exact missing source/runtime evidence;
+   - minimal diagnostic needed, if any.
 
-12. **Remediation ordering**
-    - only for actual crash-capable findings;
-    - smallest causal fix first;
-    - no implementation in this audit.
+13. **Remediation ordering**
+   - only for actual residual crash-capable findings;
+   - smallest causal fix first;
+   - preserve the existing coexistence design unless the proven defect requires a local contract change;
+   - no implementation in this audit.
 
-13. **Completion gate table** answering every section-22 question.
+14. **Completion gate table** answering every section-22 question.
 
 ---
 
@@ -893,12 +993,13 @@ The auditor must **not stop** after finding the first suspicious lock, raw point
 The audit is complete only after:
 
 - both repositories have been traced through every required lifecycle;
+- the current intentional coexistence design has been reconstructed and summarized before defect classification;
 - every shared hook has an install/uninstall/original-target analysis;
 - every relevant swapchain/context/queue/device has an ownership/lifetime row;
-- PR34-38 and REF PR55/56 have been applied to every candidate before classification;
+- PR34-38 and REF PR55/56 plus the pre-retire/runtime-binding coordination mechanisms have been applied to every candidate before classification;
 - all required timing diagrams are produced;
 - every completion question is answered;
-- each primary finding has a concrete crash mechanism.
+- each primary finding has a concrete crash mechanism and an explanation of why the current safeguard does not cover it.
 
 Do not make these shortcuts:
 
@@ -907,6 +1008,8 @@ Do not make these shortcuts:
 - do not treat "different queues" as a crash without proving stale/invalid use;
 - do not treat a timeout as the initiating fault without chronology;
 - do not treat a historical crash stack as proof against current source;
+- do not assume the projects still need a coexistence architecture to be designed — one already exists;
+- do not propose replacing the current coordinated design merely because it is complex;
 - do not recommend one global lock;
 - do not add sleeps/yields/logging delays as fixes;
 - do not propose a broad ownership rewrite;
@@ -919,18 +1022,22 @@ If a vendor/internal boundary prevents proof, finish all source-side reasoning f
 
 ## 25. Expected disposition
 
-It is acceptable for the audit to conclude that **no current crash-capable coexistence defect is proven**.
+It is acceptable — and entirely plausible given the amount of coexistence-specific hardening already present — for the audit to conclude that **no current residual crash-capable coexistence defect is proven**.
 
-The purpose is not to generate work. The purpose is to distinguish:
+A "no finding" result is not evidence that the audit was too shallow if the auditor has reconstructed the current architecture and proven the relevant invariants.
+
+The purpose is not to generate work and not to redesign the integration. The purpose is to distinguish:
 
 ```text
-real current crash path
+real residual current crash path that escapes existing safeguards
 vs.
 already-fixed historical path
 vs.
-fragile but safe coexistence
+intentional and correctly coordinated coexistence behavior
+vs.
+fragile-looking but safe coexistence
 vs.
 unproven suspicion
 ```
 
-A short list of strongly proven findings is preferred over a long list of refactoring concerns.
+A short list of strongly proven **residual** findings is preferred over a long list of generic coexistence concerns or refactoring ideas.
