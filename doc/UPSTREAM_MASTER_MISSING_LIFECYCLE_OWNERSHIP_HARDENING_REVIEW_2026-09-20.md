@@ -31,6 +31,7 @@ The fork master and upstream master have diverged significantly. The release/ref
 | P1 | Make OwnedMutex ownership thread-aware and hook reentrancy flags thread-local | reframework-0.9 PR #33 | Missing | Recommend |
 | P2 | Add lifecycle generation / per-create context identity to reject stale destroys | reframework-0.9 PR #28 | Missing | Recommend |
 | P2 | Serialize Streamline-to-XeFG frame-state mutations against Present | reframework-0.9 PR #36, #37 | Missing; master needs adapted implementation | Recommend |
+| Optional integration | REFramework pre-retire XeFG lifecycle handshake | reframework-0.9 PR #29, #31, #34, #35 | Not present upstream; requires matching REF export | Recommend for supported custom REF integration |
 
 The first four candidates are primarily ownership/lifetime correctness issues. They do not depend on custom REFramework behavior.
 
@@ -1016,6 +1017,279 @@ A debug assertion/log can help identify unexpected nested ownership instead of s
 - logging enabled/disabled comparison.
 
 
+
+---
+
+# 8. Optional REFramework pre-retire XeFG lifecycle handshake
+
+## Fork provenance
+
+- reframework-0.9 PR #29: https://github.com/onehoon/OptiScaler/pull/29
+- reframework-0.9 PR #31: https://github.com/onehoon/OptiScaler/pull/31
+- reframework-0.9 PR #34: https://github.com/onehoon/OptiScaler/pull/34
+- reframework-0.9 PR #35: https://github.com/onehoon/OptiScaler/pull/35
+
+Relevant OptiScaler files:
+
+- OptiScaler/framegen/xefg/XeFG_Dx12.cpp
+- OptiScaler/wrapped/wrapped_swapchain.cpp
+- OptiScaler/wrapped/wrapped_swapchain.h
+
+Matching custom REFramework side:
+
+- exports **REFramework_XeFG_PreRetireSwapchainV1**
+- tracks the Intel XeFG presentation/swapchain lifecycle and can detach before OptiScaler retires it
+
+## Scope and prerequisite
+
+This candidate is different from Candidates 1-7.
+
+It is not a standalone OptiScaler correctness change. It is an **optional cross-project lifecycle integration** for environments where a matching REFramework build explicitly tracks the XeFG presentation lifecycle.
+
+The handshake is only useful when the matching REF export is present.
+
+When the export is unavailable, OptiScaler should continue using its normal standalone retirement path.
+
+This makes the integration optional rather than a hard dependency on REFramework.
+
+## Why the handshake is needed
+
+In the custom OptiScaler + custom REFramework XeFG environment, both components have lifecycle responsibilities around the same Intel presentation objects.
+
+The ownership model is intentionally asymmetric:
+
+~~~text
+OptiScaler
+    -> owns the public XeFG lifecycle and game-side swapchain/queue transition
+
+REFramework
+    -> observes/binds to Intel XeFG presentation lifecycle state
+    -> may hold tracking references/callback state that must be detached before retirement
+~~~
+
+Without an explicit handoff, OptiScaler can begin destroying the XeFG context or releasing the final public proxy while REF still believes that lifecycle is active.
+
+That creates ordering ambiguity:
+
+~~~text
+OptiScaler retires XeFG proxy/context
+    while
+REF still tracks/binds that same lifecycle
+~~~
+
+Depending on timing, this can surface as:
+
+- reentrant final Release;
+- stale REF tracking state;
+- late callback access during retirement;
+- shutdown AVs;
+- recreation failures because one side still considers the old lifecycle active.
+
+The desired invariant is:
+
+> If REFramework is actively tracking the XeFG lifecycle, OptiScaler must obtain an explicit safe-to-retire result from REF before live retirement proceeds.
+
+## ABI used by the fork
+
+The custom REFramework exposes:
+
+~~~text
+REFramework_XeFG_PreRetireSwapchainV1
+~~~
+
+OptiScaler dynamically discovers the export at runtime.
+
+Conceptually, the call is:
+
+~~~text
+PrepareREFForXeFGProxyRetire(publicProxy, swapchainContext, hwnd)
+~~~
+
+REF returns one of three meaningful outcomes:
+
+~~~text
+SafeNotTracked
+    -> REF is not tracking this lifecycle
+    -> OptiScaler may continue
+
+SafeDetached
+    -> REF was tracking it and successfully detached
+    -> OptiScaler may continue
+
+Blocked
+    -> REF cannot safely detach / retirement is not safe
+    -> OptiScaler must not continue live retirement
+~~~
+
+Unknown future return values are treated as blocked by the V1 caller.
+
+If module enumeration succeeds but the export does not exist, the result is **NotAvailable**, which means normal standalone behavior continues.
+
+## PR #29: final public proxy handoff
+
+PR #29 added the initial handoff at the most important ownership boundary:
+
+~~~text
+final public XeFG proxy Release
+    -> ask REF to detach
+    -> only then continue XeFG teardown / final proxy release
+~~~
+
+This addresses the case where REF may still be tracking the presentation proxy at the moment the last public OptiScaler reference is being consumed.
+
+## PR #31: extend handoff to all live-retirement paths
+
+PR #31 generalized the handshake so it is not limited to final public proxy release.
+
+The pre-retire check is also performed before:
+
+- same-HWND recreation;
+- explicit ReleaseSwapchain();
+- final proxy release.
+
+This matters because the old lifecycle can be retired for reasons other than final wrapper Release.
+
+The important rule is:
+
+> Every live XeFG lifecycle retirement path that can invalidate REF-tracked presentation state should pass through the same pre-retire gate.
+
+## PR #34: protect final Release against REF reentrancy
+
+The handshake itself can cause reentrancy.
+
+REF may need to perform AddRef/Release operations while detaching its presentation tracking.
+
+If this occurs during the wrapper's final Release path, the wrapper can re-enter finalization while its first finalization is still in progress.
+
+PR #34 added explicit final-release ownership state so that a reentrant final Release is consumed safely instead of running the retirement path twice.
+
+Conceptually:
+
+~~~text
+wrapper final Release begins
+    -> mark final release in progress
+    -> call REF pre-retire handshake
+        -> REF detach may cause AddRef/Release
+            -> reentrant final Release sees finalization already active
+            -> does not run teardown again
+    -> original owner finishes retirement
+    -> real swapchain released once
+    -> wrapper destroyed once
+~~~
+
+This is why PR #34 is part of the handshake package rather than an unrelated wrapper fix.
+
+## PR #35: process-shutdown exception
+
+The live-retirement ordering rule is not automatically correct during process shutdown.
+
+During process teardown:
+
+- module destruction order is no longer normal runtime order;
+- REF may itself be shutting down;
+- calling into external module code can be unsafe;
+- vendor teardown paths may already be in partially dismantled state.
+
+The fork therefore skips the external REF pre-retire handshake when:
+
+~~~text
+State::isShuttingDown == true
+~~~
+
+Live runtime retirement still uses the handshake.
+
+This separation is important:
+
+~~~text
+live retirement:
+    OptiScaler -> REF pre-retire -> XeFG teardown
+
+process shutdown:
+    avoid external REF handoff
+    -> follow shutdown-specific ownership policy
+~~~
+
+Upstream should preserve this distinction if it adopts the integration.
+
+## Why this is now relevant for upstream review
+
+This should be considered an upstream candidate if the project intends to support or recommend the matching custom REFramework build for XeFG users.
+
+The integration is intentionally:
+
+- dynamically discovered;
+- optional;
+- versioned by export name;
+- inactive when the matching REF export is absent.
+
+Therefore upstream can support the integration without introducing a hard build-time or runtime dependency on REFramework.
+
+This is useful when OptiScaler and REFramework are both participating in the Intel XeFG presentation lifecycle, because it makes the retirement ordering explicit instead of relying on incidental COM reference timing.
+
+## Upstream implementation recommendation
+
+If upstream wants to support the custom REF integration:
+
+1. Keep the handshake optional and runtime-discovered.
+2. Use a versioned export/ABI.
+3. Treat **SafeNotTracked** and **SafeDetached** as safe to continue.
+4. Treat **Blocked** and unknown V1 return values as fail-closed for live retirement.
+5. Use the same pre-retire gate for every live lifecycle retirement path that invalidates REF-tracked XeFG presentation state.
+6. Protect final wrapper Release from reentrant finalization.
+7. Skip the external handshake during process shutdown.
+8. Keep the integration separate from core OptiScaler ownership rules; Candidates 1-7 must remain correct without REF installed.
+
+## What should not be assumed
+
+The handshake does not mean:
+
+- REF owns the XeFG lifecycle;
+- OptiScaler may skip its own teardown correctness;
+- a REF return value replaces COM ownership;
+- every REFramework build supports this ABI.
+
+The contract is only:
+
+> REF confirms whether its own tracking state is safe for OptiScaler to retire the current XeFG lifecycle.
+
+## Suggested validation
+
+Test all combinations:
+
+- matching custom REF installed;
+- no REF installed;
+- REF installed without the V1 export;
+- REF returns SafeNotTracked;
+- REF returns SafeDetached;
+- REF returns Blocked;
+- same-HWND recreation;
+- explicit ReleaseSwapchain;
+- wrapper final Release;
+- reentrant AddRef/Release during detach;
+- process shutdown;
+- Intel and non-Intel GPUs using XeFG output.
+
+## Packaging recommendation
+
+This should be reviewed as one coordinated integration package:
+
+~~~text
+PR29
+    -> initial pre-retire ABI at final proxy boundary
+
+PR31
+    -> all live-retirement paths use the gate
+
+PR34
+    -> reentrant final-release protection
+
+PR35
+    -> process-shutdown exception
+~~~
+
+Taking only one piece can leave another retirement path unprotected or can introduce reentrancy/shutdown problems.
+
+
 ---
 
 # Suggested upstream review order
@@ -1031,6 +1305,7 @@ A low-risk review order would be:
 5. **Thread-aware OwnedMutex + thread-local hook guards**
 6. **Lifecycle generation / per-create context tokens**
 7. **Streamline-to-XeFG frame transaction serialization (master-adapted)**
+8. **Optional REFramework pre-retire XeFG lifecycle handshake**
 
 Reasons for this order:
 
@@ -1039,6 +1314,7 @@ Reasons for this order:
 - Item 5 changes synchronization semantics and is a prerequisite for a safe master-native version of Item 7.
 - Item 6 is broader lifecycle hardening and is easiest to reason about after ownership rules are already clear.
 - Item 7 should follow Item 5 because current master EvaluateState has its own owner-555 lock and cannot accept the 0.9 patch literally.
+- Item 8 is optional integration work and should be reviewed as one PR29/31/34/35 package only if upstream intends to support the matching custom REFramework lifecycle ABI.
 
 The fork release/reframework-0.9 implementation order should not be treated as a required upstream order because current master has additional HUDfix, resource tracking, DX11-with-DX12, low-latency, and Streamline changes.
 
@@ -1049,14 +1325,6 @@ The fork release/reframework-0.9 implementation order should not be treated as a
 ## Intel Reflex selective DXGI identity quirk
 
 Excluded intentionally.
-
-## REFramework pre-retire handshake
-
-The release/reframework-0.9 branch contains a custom dynamic handshake based on **REFramework_XeFG_PreRetireSwapchainV1**.
-
-That is useful for the paired custom OptiScaler + REFramework environment, but it requires a matching REFramework export/ABI and is not a standalone upstream OptiScaler correctness fix.
-
-If upstream wants formal REFramework/XeFG lifecycle coordination, that should be discussed as a separate integration proposal.
 
 ## XeLL release/0.9 fail-closed implementation
 
