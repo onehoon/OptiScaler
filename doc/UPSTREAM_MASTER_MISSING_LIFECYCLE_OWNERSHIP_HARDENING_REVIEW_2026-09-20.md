@@ -30,10 +30,11 @@ The fork master and upstream master have diverged significantly. The release/ref
 | P1 | Own the D3D12 command queue for the XeFG lifecycle | reframework-0.9 PR #32 | Missing | Strongly recommend |
 | P1 | Make OwnedMutex ownership thread-aware and hook reentrancy flags thread-local | reframework-0.9 PR #33 | Missing | Recommend |
 | P2 | Add lifecycle generation / per-create context identity to reject stale destroys | reframework-0.9 PR #28 | Missing | Recommend |
+| P2 | Serialize Streamline-to-XeFG frame-state mutations against Present | reframework-0.9 PR #36, #37 | Missing; master needs adapted implementation | Recommend |
 
 The first four candidates are primarily ownership/lifetime correctness issues. They do not depend on custom REFramework behavior.
 
-The last two are synchronization and stale-lifecycle hardening. They are still generally applicable, but upstream should review them against current master callback/threading behavior before implementing them.
+The last three are synchronization and stale-lifecycle hardening. They are still generally applicable, but upstream should review them against current master callback/threading behavior before implementing them.
 
 ---
 
@@ -805,6 +806,216 @@ Possible implementation:
 - failed recreation followed by retry;
 - FFX API and legacy FSR3 input paths.
 
+
+---
+
+# 7. Serialize Streamline-to-XeFG frame-state mutations against Present
+
+## Fork provenance
+
+- reframework-0.9 PR #36: https://github.com/onehoon/OptiScaler/pull/36
+- reframework-0.9 PR #37: https://github.com/onehoon/OptiScaler/pull/37
+
+Relevant files:
+
+- OptiScaler/OwnedMutex.h
+- OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp
+- OptiScaler/framegen/xefg/XeFG_Dx12.cpp
+
+## Problem being addressed
+
+The Streamline DX12 input path mutates the same XeFG frame-generation object that the Present path consumes.
+
+Current upstream master allows these operations to run without one common transaction boundary:
+
+- **Sl_Inputs_Dx12::setConstants()**
+  - advances frame tracking;
+  - calls **XeFG_Dx12::EvaluateState()**;
+  - updates camera state, jitter, motion-vector scale, reset state, and frame-time state.
+- **Sl_Inputs_Dx12::reportResource()**
+  - advances frame tracking;
+  - selects a frame index;
+  - publishes depth, motion-vector, HUDless, and UI resources into the FG object.
+- **Sl_Inputs_Dx12::markPresent()**
+  - mutates frame-boundary state and the FG frame count.
+- **Sl_Inputs_Dx12::evaluateState()**
+  - reads frame state and can request FG state changes.
+
+At the same time, **FGHooks::FGPresent()** takes the FG mutex with logical owner 2 and calls **fg->Present()**.
+
+Therefore the producer side can be updating frame identity, resources, or constants while the consumer side is entering XeFG Present unless the game/vendor callback ordering happens to serialize them.
+
+The issue is not specific to Monster Hunter World and does not require E_ABORT 4004 to be proven as the root cause. MHW was the workload that motivated the investigation, but the underlying invariant is general:
+
+> XeFG must not consume a partially updated frame transaction while Streamline callbacks are still publishing that frame's state.
+
+## What PR #36 did on release/reframework-0.9
+
+PR #36 introduced a small RAII transaction guard around the Streamline-to-XeFG mutation entry points.
+
+Conceptually:
+
+~~~text
+Streamline frame callback
+    -> if output is XeFG
+    -> if current thread does not already own the FG transaction mutex
+    -> acquire FG mutex as frame transaction owner
+    -> perform frame/resource/constants mutation
+    -> release at outer scope
+~~~
+
+It was applied to:
+
+- setConstants();
+- reportResource();
+- evaluateState();
+- markPresent().
+
+Same-thread nested calls were allowed to reuse the outer transaction instead of recursively locking the non-recursive mutex.
+
+This depends on the thread-aware OwnedMutex behavior described in Candidate 5.
+
+## What PR #37 corrected
+
+PR #37 removed an ownership violation from **XeFG_Dx12::EvaluateState()**.
+
+Older code contained logic conceptually equivalent to:
+
+~~~cpp
+if (Mutex.isOwnedByCurrentThread(2))
+    Mutex.unlockThis(2);
+~~~
+
+EvaluateState did not acquire that outer owner-2 transaction, so it must not release it.
+
+The owner of a transaction must also be the scope responsible for releasing it.
+
+The invariant is:
+
+> Callee code must not release a frame transaction acquired by its caller.
+
+## Important master-specific difference
+
+The release/reframework-0.9 implementation **must not be copied literally into current upstream master**.
+
+Current upstream master has:
+
+~~~cpp
+void XeFG_Dx12::EvaluateState(...)
+{
+    OwnedLockGuard lock(Mutex, 555);
+    ...
+}
+~~~
+
+The 0.9 branch did not have this internal owner-555 lock when PR #36/#37 landed.
+
+If upstream simply adds the PR #36 outer owner-2 transaction around **setConstants()**, then:
+
+~~~text
+setConstants()
+    -> acquire Mutex owner 2
+    -> XeFG_Dx12::EvaluateState()
+        -> attempts to acquire the same non-recursive Mutex as owner 555
+        -> self-deadlock
+~~~
+
+Therefore the upstream implementation needs to adapt the locking model.
+
+## Recommended master-native implementation
+
+Candidate 5, thread-aware OwnedMutex, should be implemented first or together with this work.
+
+Then choose one explicit ownership model.
+
+A practical model is:
+
+1. Streamline XeFG entry points establish the outer frame transaction.
+2. **XeFG_Dx12::EvaluateState()** acquires its internal owner-555 lock only when the current thread does not already own the FG mutex.
+3. If the current thread already owns the outer frame transaction, EvaluateState executes within that transaction without recursively locking.
+4. EvaluateState never releases owner 2; the outer RAII transaction releases it.
+5. Non-Streamline callers of EvaluateState keep the existing internal serialization because they do not arrive with the outer transaction.
+6. Present continues to use the same FG mutex, so it cannot overlap a cross-thread Streamline frame transaction.
+7. Same-thread nested vendor callbacks remain reentrant-safe through the thread-aware ownership check.
+
+Conceptually:
+
+~~~text
+Streamline path:
+    transaction owner 2
+        -> EvaluateState notices same-thread ownership
+        -> no nested lock
+        -> SetResource / SetFrameCount / constants updates
+    transaction scope releases owner 2
+
+Other input path:
+    no outer transaction
+        -> EvaluateState acquires owner 555 itself
+        -> existing standalone serialization preserved
+
+Present on another thread:
+    waits for owner 2 transaction to complete
+    -> consumes a coherent frame state
+~~~
+
+An alternative is a dedicated frame-transaction mutex shared by the Streamline producer and Present consumer, but adding another lock should be justified carefully because lock ordering with the existing FG lifecycle mutex then becomes another concern.
+
+Reusing the existing FG mutex with explicit same-thread ownership appears closer to the current architecture.
+
+## Why this is worth upstream review even without proven E_ABORT causality
+
+This proposal should not be presented as:
+
+> "PR36/37 fixes Intel MHW E_ABORT 4004."
+
+That causal claim is not established.
+
+It can be presented as:
+
+> "Streamline callbacks publish a multi-step XeFG frame state while Present consumes the same object. Current master has no common transaction boundary between those producer mutations and XeFG Present. The fork serialized those mutations and made transaction ownership caller-scoped."
+
+That is an independently reviewable concurrency property.
+
+Even if it does not prove the cause of a specific Intel error, avoiding partially observed FG frame state is a defensible synchronization improvement.
+
+## Scope recommendation
+
+Keep the first upstream version narrow:
+
+- XeFG output only;
+- Streamline DX12 input only;
+- only frame-state mutation entry points;
+- no FSRFG/DLSSG behavior change;
+- no broad recursive-mutex conversion;
+- no assumption that every logical owner check means same-thread reentrancy.
+
+This reduces regression risk.
+
+## Risks / things to audit
+
+Before landing, upstream should inspect:
+
+- every function called under the outer transaction for nested FG mutex acquisition;
+- lock ordering with _frameBoundaryMutex;
+- lifecycle/resize locks that may call back into Streamline;
+- same-thread vendor callbacks from Present;
+- shutdown paths;
+- whether Streamline SL1 requires the same treatment separately.
+
+A debug assertion/log can help identify unexpected nested ownership instead of silently bypassing it.
+
+## Suggested validation
+
+- Streamline input -> XeFG output;
+- Present on a different thread from resource/constants callbacks;
+- same-thread nested callbacks;
+- repeated FG enable/disable;
+- resize/recreation while Streamline callbacks are active;
+- Intel MHW E_ABORT 4004 reproduction workload as a regression test, without claiming it as proof of root cause;
+- other Streamline titles to catch over-serialization or deadlock regressions;
+- logging enabled/disabled comparison.
+
+
 ---
 
 # Suggested upstream review order
@@ -819,13 +1030,15 @@ A low-risk review order would be:
 4. **XeFG command queue lifetime ownership**
 5. **Thread-aware OwnedMutex + thread-local hook guards**
 6. **Lifecycle generation / per-create context tokens**
+7. **Streamline-to-XeFG frame transaction serialization (master-adapted)**
 
 Reasons for this order:
 
 - Items 1 and 2 correct explicit ownership/lifecycle violations already visible in current master.
 - Items 3 and 4 make COM lifetimes explicit before adding more lifecycle identity state.
-- Item 5 changes synchronization semantics and deserves focused regression testing.
+- Item 5 changes synchronization semantics and is a prerequisite for a safe master-native version of Item 7.
 - Item 6 is broader lifecycle hardening and is easiest to reason about after ownership rules are already clear.
+- Item 7 should follow Item 5 because current master EvaluateState has its own owner-555 lock and cannot accept the 0.9 patch literally.
 
 The fork release/reframework-0.9 implementation order should not be treated as a required upstream order because current master has additional HUDfix, resource tracking, DX11-with-DX12, low-latency, and Streamline changes.
 
@@ -850,12 +1063,6 @@ If upstream wants formal REFramework/XeFG lifecycle coordination, that should be
 The release branch contains additional XeLL context quarantine and fakenvapi publication ownership work.
 
 Current upstream master has evolved its low-latency/XeLL architecture substantially, so the 0.9 implementation is not an appropriate direct proposal. The invariant can be revisited separately against current master.
-
-## Streamline-to-XeFG outer frame transaction from PR36/PR37
-
-The release branch serializes selected Streamline XeFG input callbacks with the FG transaction mutex and fixes caller-owned transaction release semantics.
-
-This was developed while investigating a logging-sensitive Intel MHW E_ABORT 4004 path. It is not included in the main upstream proposal because the runtime hypothesis was not proven strongly enough to recommend a general synchronization change yet.
 
 ---
 
