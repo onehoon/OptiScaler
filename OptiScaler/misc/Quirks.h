@@ -208,7 +208,7 @@ static const QuirkEntry quirkTable[] = {
     // Old menu needed to avoid the invisible overlay while upscaling is active
     QUIRK_ENTRY("re2.exe", GameQuirk::DisableDxgiSpoofing, GameQuirk::OldOverlayMenu),
     QUIRK_ENTRY("re3.exe", GameQuirk::DisableDxgiSpoofing, GameQuirk::OldOverlayMenu),
-    QUIRK_ENTRY("re4.exe", GameQuirk::DisableDxgiSpoofing, GameQuirk::OldOverlayMenu),
+    QUIRK_ENTRY("re4.exe", GameQuirk::DisableDxgiSpoofing),
     QUIRK_ENTRY("re7.exe", GameQuirk::DisableDxgiSpoofing, GameQuirk::OldOverlayMenu),
     QUIRK_ENTRY("re8.exe", GameQuirk::DisableDxgiSpoofing, GameQuirk::OldOverlayMenu),
     QUIRK_ENTRY("devilmaycry5.exe", GameQuirk::DisableDxgiSpoofing, GameQuirk::OldOverlayMenu),
